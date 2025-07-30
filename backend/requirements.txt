@@ -1,0 +1,11 @@
+Flask==2.3.3
+Flask-CORS==4.0.0
+Flask-SQLAlchemy==3.0.5
+Flask-SocketIO==5.3.6
+psycopg2-binary==2.9.7
+ansible-runner==2.3.4
+ansible==8.2.0
+python-socketio==5.8.0
+eventlet==0.33.3
+python-dotenv==1.0.0
+werkzeug==2.3.7 

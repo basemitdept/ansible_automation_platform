@@ -1,0 +1,45 @@
+---
+- name: Basic server setup
+  hosts: all
+  become: no
+  gather_facts: no  # Skip for better performance
+  
+  tasks:
+    - name: Test connection
+      ping:
+    
+    - name: Get system information
+      setup:
+        gather_subset:
+          - 'all'
+    
+    - name: Show hostname
+      debug:
+        msg: "Connected to {{ ansible_hostname }}"
+    
+    - name: Create a sample directory in home
+      file:
+        path: "{{ ansible_env.HOME }}/sample-app"
+        state: directory
+        mode: '0755'
+    
+    - name: Create a sample configuration file
+      copy:
+        content: |
+          # Sample configuration
+          app_name=sample-app
+          app_version=1.0.0
+          debug=false
+          created_by=ansible
+          created_at={{ ansible_date_time.iso8601 }}
+        dest: "{{ ansible_env.HOME }}/sample-app/config.conf"
+        mode: '0644'
+    
+    - name: Display server information
+      debug:
+        msg: |
+          Server setup completed successfully!
+          Hostname: {{ ansible_hostname }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Architecture: {{ ansible_architecture }}
+          Memory: {{ ansible_memtotal_mb }}MB 

@@ -1,0 +1,53 @@
+---
+- name: Multi-Host Demo Playbook
+  hosts: all
+  gather_facts: yes
+  serial: 1  # Execute on hosts one by one to see the progression
+  
+  tasks:
+    - name: Display host information
+      debug:
+        msg: |
+          ========================================
+          Executing on: {{ inventory_hostname }}
+          Host IP: {{ ansible_default_ipv4.address | default('N/A') }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Architecture: {{ ansible_architecture }}
+          ========================================
+    
+    - name: Test connectivity
+      ping:
+    
+    - name: Show current user
+      command: whoami
+      register: current_user
+    
+    - name: Display execution details
+      debug:
+        msg: |
+          Host: {{ inventory_hostname }}
+          Current User: {{ current_user.stdout }}
+          Execution Time: {{ ansible_date_time.iso8601 }}
+    
+    - name: Create a demo file with host-specific content
+      copy:
+        content: |
+          Multi-Host Execution Demo
+          =========================
+          Host: {{ inventory_hostname }}
+          User: {{ current_user.stdout }}
+          Executed at: {{ ansible_date_time.iso8601 }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          
+          This file was created as part of a multi-host Ansible execution.
+        dest: "{{ ansible_env.HOME }}/multi-host-demo-{{ inventory_hostname }}.txt"
+        mode: '0644'
+    
+    - name: Confirm file creation
+      debug:
+        msg: "Demo file created at {{ ansible_env.HOME }}/multi-host-demo-{{ inventory_hostname }}.txt"
+    
+    - name: Wait briefly to show sequential execution
+      pause:
+        seconds: 2
+        prompt: "Completed execution on {{ inventory_hostname }}, moving to next host..." 

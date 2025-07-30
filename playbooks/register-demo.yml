@@ -1,0 +1,75 @@
+---
+- name: Register Variables Demo - Artifacts Testing
+  hosts: all
+  gather_facts: no  # Skip fact gathering for better performance
+  
+  tasks:
+    - name: Check disk usage
+      shell: df -h
+      register: disk_usage
+      
+    - name: Get current date and time
+      shell: date '+%Y-%m-%d %H:%M:%S'
+      register: current_time
+      
+    - name: List running processes
+      shell: ps aux | head -10
+      register: running_processes
+      
+    - name: Check memory usage
+      shell: free -h
+      register: memory_info
+      
+    - name: Get network interfaces
+      shell: ip addr show | grep -E '^[0-9]+:|inet ' || echo "Network info not available"
+      register: network_interfaces
+      
+    - name: Get system uptime
+      shell: uptime
+      register: system_uptime
+      
+    - name: List home directory contents
+      shell: ls -la {{ ansible_env.HOME }}
+      register: home_contents
+      
+    - name: Create test file with system info
+      copy:
+        content: |
+          System Information Report
+          ========================
+          Hostname: {{ ansible_hostname }}
+          Date: {{ current_time.stdout }}
+          Uptime: {{ system_uptime.stdout }}
+          
+          Disk Usage:
+          {{ disk_usage.stdout }}
+          
+          Memory Usage:
+          {{ memory_info.stdout }}
+          
+          Network Interfaces:
+          {{ network_interfaces.stdout }}
+          
+          Home Directory Contents:
+          {{ home_contents.stdout }}
+          
+          Running Processes:
+          {{ running_processes.stdout }}
+        dest: "{{ ansible_env.HOME }}/system-report-{{ ansible_hostname }}.txt"
+        mode: '0644'
+      register: file_creation
+      
+    - name: Verify file was created
+      stat:
+        path: "{{ ansible_env.HOME }}/system-report-{{ ansible_hostname }}.txt"
+      register: file_check
+      
+    - name: Display summary
+      debug:
+        msg: |
+          🎉 Register Demo Complete for {{ ansible_hostname }}!
+          📊 Collected {{ ansible_facts | length }} system facts
+          💾 File created: {{ file_check.stat.exists | ternary('✅ Success', '❌ Failed') }}
+          📁 Location: ~/system-report-{{ ansible_hostname }}.txt
+          
+          All register variables are now available as artifacts in the portal! 

@@ -1,0 +1,58 @@
+---
+- name: Portal IP Demo - Test IP Status Extraction
+  hosts: all
+  gather_facts: yes
+  
+  tasks:
+    - name: Display host information
+      debug:
+        msg: |
+          🖥️ Processing Host: {{ inventory_hostname }}
+          📍 IP Address: {{ ansible_default_ipv4.address | default('N/A') }}
+          👤 User: {{ ansible_user_id }}
+          🔄 Status: Starting tasks...
+    
+    - name: Basic connectivity check
+      ping:
+      register: ping_result
+    
+    - name: Show connectivity success
+      debug:
+        msg: "✅ {{ inventory_hostname }} is reachable and responding"
+      when: ping_result is succeeded
+    
+    - name: Create test directory
+      file:
+        path: "{{ ansible_env.HOME }}/portal-ip-test"
+        state: directory
+        mode: '0755'
+    
+    - name: Simulate some processing time
+      pause:
+        seconds: 2
+    
+    # Conditional failure for demo purposes
+    - name: Fail on specific hosts for testing
+      fail:
+        msg: "❌ Intentional failure for portal IP demo on {{ inventory_hostname }}"
+      when: "'fail' in inventory_hostname or inventory_hostname == 'localhost'"
+    
+    - name: Create success marker
+      copy:
+        content: |
+          PORTAL IP DEMO - SUCCESS
+          ========================
+          Host: {{ inventory_hostname }}
+          IP: {{ ansible_default_ipv4.address | default('N/A') }}
+          Timestamp: {{ ansible_date_time.iso8601 }}
+          
+          This host successfully completed all tasks in the portal IP demo.
+        dest: "{{ ansible_env.HOME }}/portal-ip-test/success.log"
+        mode: '0644'
+    
+    - name: Final success message
+      debug:
+        msg: |
+          🎉 {{ inventory_hostname }} - All tasks completed successfully!
+          📍 IP: {{ ansible_default_ipv4.address | default('N/A') }}
+          ✅ The portal should now show this IP in the SUCCESS section 

@@ -1,0 +1,80 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f0f2f5;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+.ant-layout {
+  min-height: 100vh;
+}
+
+.ant-layout-sider {
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+}
+
+.ant-layout-content {
+  padding: 24px;
+  background: #f0f2f5;
+}
+
+.card-container {
+  margin-bottom: 16px;
+}
+
+.task-output {
+  background: #1f1f1f;
+  color: #fff;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 16px;
+  border-radius: 6px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.task-output .output-line {
+  margin-bottom: 4px;
+  white-space: pre-wrap;
+}
+
+.status-badge {
+  text-transform: uppercase;
+  font-weight: bold;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.status-pending {
+  background: #faad14;
+  color: #fff;
+}
+
+.status-running {
+  background: #1890ff;
+  color: #fff;
+}
+
+.status-completed {
+  background: #52c41a;
+  color: #fff;
+}
+
+.status-partial {
+  background: #fa8c16;
+  color: #fff;
+}
+
+.status-failed {
+  background: #ff4d4f;
+  color: #fff;
+} 

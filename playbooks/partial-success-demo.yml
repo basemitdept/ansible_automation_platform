@@ -1,0 +1,62 @@
+---
+- name: Partial Success Demo Playbook
+  hosts: all
+  gather_facts: yes
+  ignore_errors: yes  # Continue execution even if some tasks fail
+  
+  tasks:
+    - name: Display host information
+      debug:
+        msg: |
+          ========================================
+          Testing on: {{ inventory_hostname }}
+          This task should succeed on all hosts
+          ========================================
+    
+    - name: Test basic connectivity (should succeed)
+      ping:
+    
+    - name: Create a test directory (should succeed)
+      file:
+        path: "{{ ansible_env.HOME }}/partial-test"
+        state: directory
+        mode: '0755'
+    
+    - name: Show which host we're processing
+      debug:
+        msg: "Processing tasks on {{ inventory_hostname }}..."
+    
+    - name: Conditional task - fail on localhost
+      fail:
+        msg: "❌ Intentional failure on localhost for demo purposes"
+      when: inventory_hostname == "localhost"
+      ignore_errors: no
+    
+    - name: Conditional task - fail on hosts containing "test"
+      fail:
+        msg: "❌ Intentional failure on test hosts for demo purposes"  
+      when: "'test' in inventory_hostname"
+      ignore_errors: no
+    
+    - name: Report success for surviving hosts
+      debug:
+        msg: "✅ {{ inventory_hostname }} successfully passed all failure conditions!"
+    
+    - name: Create success file (should succeed on hosts that haven't failed)
+      copy:
+        content: |
+          Partial Success Demo
+          ===================
+          Host: {{ inventory_hostname }}
+          Status: SUCCESS
+          Timestamp: {{ ansible_date_time.iso8601 }}
+          
+          This host completed all tasks successfully!
+        dest: "{{ ansible_env.HOME }}/partial-test/success.txt"
+        mode: '0644'
+    
+    - name: Show final status
+      debug:
+        msg: |
+          Host {{ inventory_hostname }} reached the end of playbook
+          Check the results to see partial success demonstration 

@@ -1,0 +1,8 @@
+---
+- name: Sample playbook
+  hosts: all
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Update system packages
+      command: hostname

@@ -1,0 +1,12 @@
+---
+- name: Test Connection
+  hosts: all
+  gather_facts: no
+  
+  tasks:
+    - name: Test ping connectivity
+      ping:
+      
+    - name: Show connection success
+      debug:
+        msg: "Successfully connected to {{ inventory_hostname }}" 
