@@ -7,7 +7,7 @@ import os
 import threading
 import subprocess
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import time
 import secrets
@@ -122,16 +122,48 @@ def update_playbook(playbook_id):
 
 @app.route('/api/playbooks/<playbook_id>', methods=['DELETE'])
 def delete_playbook(playbook_id):
-    playbook = Playbook.query.get_or_404(playbook_id)
-    
-    # Delete file
-    playbook_file = os.path.join(PLAYBOOKS_DIR, f"{playbook.name}.yml")
-    if os.path.exists(playbook_file):
-        os.remove(playbook_file)
-    
-    db.session.delete(playbook)
-    db.session.commit()
-    return '', 204
+    try:
+        playbook = Playbook.query.get_or_404(playbook_id)
+        
+        # Check for active tasks using this playbook
+        active_tasks = Task.query.filter_by(playbook_id=playbook_id).filter(Task.status.in_(['pending', 'running'])).all()
+        if active_tasks:
+            return jsonify({'error': f'Cannot delete playbook: {len(active_tasks)} active task(s) are using this playbook'}), 400
+        
+        # Delete file
+        playbook_file = os.path.join(PLAYBOOKS_DIR, f"{playbook.name}.yml")
+        if os.path.exists(playbook_file):
+            os.remove(playbook_file)
+        
+        # Manually delete related records in the correct order to handle foreign key constraints
+        # Delete artifacts first (they reference execution_history)
+        db.session.execute(db.text("""
+            DELETE FROM artifacts 
+            WHERE execution_id IN (
+                SELECT id FROM execution_history WHERE playbook_id = :playbook_id
+            )
+        """), {"playbook_id": playbook_id})
+        
+        # Delete execution history
+        db.session.execute(db.text("DELETE FROM execution_history WHERE playbook_id = :playbook_id"), {"playbook_id": playbook_id})
+        
+        # Delete tasks
+        db.session.execute(db.text("DELETE FROM tasks WHERE playbook_id = :playbook_id"), {"playbook_id": playbook_id})
+        
+        # Delete webhooks
+        db.session.execute(db.text("DELETE FROM webhooks WHERE playbook_id = :playbook_id"), {"playbook_id": playbook_id})
+        
+        # Finally delete the playbook
+        db.session.execute(db.text("DELETE FROM playbooks WHERE id = :playbook_id"), {"playbook_id": playbook_id})
+        
+        db.session.commit()
+        
+        return jsonify({'message': 'Playbook deleted successfully'}), 200
+        
+    except Exception as e:
+        print(f"Error deleting playbook: {str(e)}")
+        db.session.rollback()
+        return jsonify({'error': f'Failed to delete playbook: {str(e)}'}), 500
 
 # Host Group routes
 @app.route('/api/host-groups', methods=['GET'])
@@ -319,38 +351,6 @@ def delete_host(host_id):
 # Task routes
 @app.route('/api/tasks', methods=['GET'])
 def get_tasks():
-    # Persistent fix: Auto-correct running tasks with unrealistic start times
-    # This prevents the "180 minutes" duration issue
-    current_time = datetime.utcnow()
-    one_hour_ago = current_time - timedelta(hours=1)
-    
-    # Find running tasks with started_at more than 1 hour ago (likely incorrect)
-    incorrect_tasks = Task.query.filter(
-        Task.status == 'running',
-        Task.started_at.isnot(None),
-        Task.started_at < one_hour_ago
-    ).all()
-    
-    # Fix their started_at timestamps
-    for task in incorrect_tasks:
-        print(f"Auto-fixing task {task.id} started_at from {task.started_at} to {current_time}")
-        task.started_at = current_time
-    
-    # Clear started_at for pending tasks (they shouldn't have it set)
-    pending_tasks_with_start = Task.query.filter(
-        Task.status == 'pending',
-        Task.started_at.isnot(None)
-    ).all()
-    
-    for task in pending_tasks_with_start:
-        print(f"Auto-clearing started_at for pending task {task.id}")
-        task.started_at = None
-    
-    # Commit any fixes
-    if incorrect_tasks or pending_tasks_with_start:
-        db.session.commit()
-        print(f"Auto-fixed {len(incorrect_tasks)} running tasks and {len(pending_tasks_with_start)} pending tasks")
-    
     tasks = Task.query.filter(Task.status.in_(['pending', 'running'])).all()
     return jsonify([task.to_dict() for task in tasks])
 
@@ -1074,31 +1074,8 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 task.error_output = '\n'.join(error_lines)
                 task.finished_at = datetime.utcnow()
                 
-                # Analyze the output to determine success/failure per host (like the regular function)
-                full_output = '\n'.join(output_lines)
-                analysis_result = analyze_ansible_output(full_output, hosts)
-                host_results = analysis_result['host_results']
-                task_failures = analysis_result['task_failures']
-                
-                # Determine overall status based on host results
-                successful_hosts = [h for h, status in host_results.items() if status == 'success']
-                failed_hosts = [h for h, status in host_results.items() if status == 'failed']
-                partial_hosts = [h for h, status in host_results.items() if status == 'partial']
-                total_hosts_in_results = len(host_results)
-                
-                # Calculate overall status (same logic as regular function)
-                if total_hosts_in_results == 0:
-                    final_status = 'failed'
-                elif len(failed_hosts) == total_hosts_in_results:
-                    final_status = 'failed'
-                elif len(successful_hosts) == total_hosts_in_results:
-                    final_status = 'completed'
-                elif len(successful_hosts) > 0 and len(failed_hosts) == 0:
-                    final_status = 'completed'
-                else:
-                    final_status = 'partial'
-                
-                print(f"Webhook execution analysis: {len(successful_hosts)} success, {len(partial_hosts)} partial, {len(failed_hosts)} failed -> {final_status}")
+                # Determine final status
+                final_status = 'completed' if process.returncode == 0 else 'failed'
                 task.status = final_status
                 
                 # Create execution history entry for webhook execution
@@ -1124,22 +1101,8 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                         output_lines = task.output.split('\n')
                         print(f"Total output lines: {len(output_lines)}")
                         
-                        # Include dynamic hosts from the analysis results for artifact extraction
-                        all_hosts_for_artifacts = list(hosts)  # Start with original hosts
-                        
-                        # Add dynamic hosts that were found in the execution
-                        for dynamic_host in host_results.keys():
-                            if not any(h.hostname == dynamic_host for h in hosts):
-                                # Create a temporary host object for artifact extraction
-                                class DynamicHost:
-                                    def __init__(self, hostname):
-                                        self.hostname = hostname
-                                        self.name = hostname
-                                all_hosts_for_artifacts.append(DynamicHost(dynamic_host))
-                                print(f"Added dynamic host {dynamic_host} for webhook artifact extraction")
-                        
                         # Use the existing artifact extraction function
-                        output_artifacts = extract_register_from_output(output_lines, history.id, all_hosts_for_artifacts)
+                        output_artifacts = extract_register_from_output(output_lines, history.id, hosts)
                         
                         # Save all artifacts
                         for artifact in output_artifacts:
@@ -1150,11 +1113,18 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                     except Exception as artifact_error:
                         print(f"Error processing webhook artifacts: {artifact_error}")
                 
-                socketio.emit('task_update', {
-                    'task_id': str(task_id),
-                    'status': final_status,
-                    'message': f'Webhook execution {final_status}'
-                })
+                if process.returncode == 0:
+                    socketio.emit('task_update', {
+                        'task_id': str(task_id),
+                        'status': 'completed',
+                        'message': f'Webhook execution completed successfully'
+                    })
+                else:
+                    socketio.emit('task_update', {
+                        'task_id': str(task_id),
+                        'status': 'failed',
+                        'message': f'Webhook execution failed with return code {process.returncode}'
+                    })
                 
                 db.session.commit()
         
@@ -1327,12 +1297,7 @@ def extract_register_from_output(output_lines, execution_id, hosts):
     """
     artifacts = []
     print(f"Starting artifact extraction for {len(hosts)} hosts")
-    print(f"Hosts for artifact extraction: {[h.hostname for h in hosts]}")
     print(f"Total output lines to process: {len(output_lines)}")
-    
-    # Debug: Check if there are any register-related lines in the output
-    register_lines = [line for line in output_lines if 'register:' in line.lower() or '" => {' in line]
-    print(f"Found {len(register_lines)} potential register/output lines")
     
     current_task = None
     current_host = None
@@ -1349,7 +1314,7 @@ def extract_register_from_output(output_lines, execution_id, hosts):
             # Detect task names
             if "TASK [" in line and "] **" in line:
                 current_task = line.split("TASK [")[1].split("]")[0].strip()
-                print(f"Found task: '{current_task}' at line {i}")
+                print(f"Found task: {current_task}")
                 current_task_status = None  # Reset status for new task
                 in_json_block = False
                 json_lines = []
@@ -1376,11 +1341,11 @@ def extract_register_from_output(output_lines, execution_id, hosts):
                 if task_status:
                     current_host = hostname
                     current_task_status = task_status  # Store the status for multi-line JSON processing
-                    print(f"Found {task_status} result for {hostname} in task '{current_task}': {line[:100]}...")
+                    print(f"Found {task_status} result for {hostname}: {line[:100]}...")
                     
                     # Check if this line has JSON output
                     if "=> {" in line:
-                        print(f"Found JSON output for {hostname} in task '{current_task}' (status: {task_status})")
+                        print(f"Found JSON output for {hostname} in task {current_task} (status: {task_status})")
                         # Start collecting JSON
                         json_start = line.find("=> {") + 3
                         json_content = line[json_start:]
@@ -2116,21 +2081,7 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                         if any(host.hostname in line for host in fresh_hosts):
                             print(f"Debug line {i}: {line[:100]}...")
                     
-                    # Include dynamic hosts from the analysis results for artifact extraction
-                    all_hosts_for_artifacts = list(fresh_hosts)  # Start with database hosts
-                    
-                    # Add dynamic hosts that were found in the execution
-                    for dynamic_host in host_results.keys():
-                        if not any(h.hostname == dynamic_host for h in fresh_hosts):
-                            # Create a temporary host object for artifact extraction
-                            class DynamicHost:
-                                def __init__(self, hostname):
-                                    self.hostname = hostname
-                                    self.name = hostname
-                            all_hosts_for_artifacts.append(DynamicHost(dynamic_host))
-                            print(f"Added dynamic host {dynamic_host} for artifact extraction")
-                    
-                    output_artifacts = extract_register_from_output(output_lines, history.id, all_hosts_for_artifacts)
+                    output_artifacts = extract_register_from_output(output_lines, history.id, fresh_hosts)
                     
                     # Save all artifacts
                     for artifact in output_artifacts:

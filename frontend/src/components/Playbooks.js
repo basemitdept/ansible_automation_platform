@@ -194,7 +194,9 @@ const Playbooks = () => {
       message.success('Playbook deleted successfully');
       fetchPlaybooks();
     } catch (error) {
-      message.error('Failed to delete playbook');
+      console.error('Delete error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to delete playbook';
+      message.error(errorMessage);
     }
   };
 
