@@ -88,7 +88,7 @@ class Task(db.Model):
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
     host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=False)
     status = db.Column(db.String(50), default='pending')
-    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime)
     finished_at = db.Column(db.DateTime)
     output = db.Column(db.Text)
     error_output = db.Column(db.Text)
@@ -115,9 +115,9 @@ class Task(db.Model):
         return {
             'id': str(self.id),
             'playbook_id': str(self.playbook_id),
-            'host_id': str(self.host_id),
+            'host_id': str(self.host_id) if self.host_id else None,
             'status': self.status,
-            'started_at': self.started_at.isoformat(),
+            'started_at': self.started_at.isoformat() if self.started_at else None,
             'finished_at': self.finished_at.isoformat() if self.finished_at else None,
             'output': self.output,
             'error_output': self.error_output,
@@ -288,4 +288,32 @@ class ExecutionHistory(db.Model):
             'host': self.host.to_dict() if self.host else None,
             'hosts': hosts_data,  # List of all hosts in multi-host execution
             'webhook': self.webhook.to_dict() if self.webhook else None
+        }
+
+class ApiToken(db.Model):
+    __tablename__ = 'api_tokens'
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(255), nullable=False)
+    token = db.Column(db.String(64), nullable=False, unique=True)
+    description = db.Column(db.Text)
+    enabled = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_used = db.Column(db.DateTime)
+    usage_count = db.Column(db.Integer, default=0)
+    expires_at = db.Column(db.DateTime)  # Optional expiration date
+    
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'name': self.name,
+            'token': self.token,
+            'description': self.description,
+            'enabled': self.enabled,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+            'last_used': self.last_used.isoformat() if self.last_used else None,
+            'usage_count': self.usage_count,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None
         } 

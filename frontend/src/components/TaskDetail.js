@@ -11,7 +11,9 @@ import {
   Descriptions,
   Alert,
   Spin,
-  Statistic
+  Statistic,
+  message,
+  notification
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -19,7 +21,8 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   ClockCircleOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  HistoryOutlined
 } from '@ant-design/icons';
 import { tasksAPI } from '../services/api';
 import socketService from '../services/socket';
@@ -33,17 +36,47 @@ const TaskDetail = () => {
   const [task, setTask] = useState(null);
   const [loading, setLoading] = useState(true);
   const [output, setOutput] = useState([]);
+  const [redirecting, setRedirecting] = useState(false);
+  const [redirectCountdown, setRedirectCountdown] = useState(0);
+  const [wsConnected, setWsConnected] = useState(false);
   const outputRef = useRef(null);
+  const redirectTimeoutRef = useRef(null);
+  const countdownIntervalRef = useRef(null);
 
   useEffect(() => {
     fetchTask();
     
     // Connect to WebSocket for real-time updates
+    console.log('TaskDetail: Connecting to WebSocket for task:', taskId);
     socketService.connect();
+    
+    // Monitor WebSocket connection status
+    const checkWebSocketConnection = () => {
+      const isConnected = socketService.socket?.connected || false;
+      console.log('TaskDetail: WebSocket connected:', isConnected);
+      setWsConnected(isConnected);
+    };
+    
+    // Check connection status immediately and periodically
+    checkWebSocketConnection();
+    const wsCheckInterval = setInterval(checkWebSocketConnection, 2000);
     
     const handleTaskUpdate = (data) => {
       if (data.task_id === taskId) {
-        setTask(prevTask => ({ ...prevTask, status: data.status }));
+        console.log('TaskDetail: Received task update:', data);
+        setTask(prevTask => {
+          console.log('TaskDetail: Previous task status:', prevTask?.status, 'New status:', data.status);
+          const newTask = { ...prevTask, status: data.status };
+          
+          // Check if task just completed and trigger redirect
+          if (prevTask && prevTask.status !== data.status && 
+              (data.status === 'completed' || data.status === 'failed' || data.status === 'partial')) {
+            console.log('TaskDetail: Task completed, triggering redirect for status:', data.status);
+            handleTaskCompletion(data.status);
+          }
+          
+          return newTask;
+        });
       }
     };
 
@@ -69,20 +102,54 @@ const TaskDetail = () => {
     socketService.on('task_update', handleTaskUpdate);
     socketService.on('task_output', handleTaskOutput);
 
-    // Refresh task status every few seconds for tasks that are running
-    // Only fetch status, not the entire output to avoid flickering
-    const interval = setInterval(() => {
-      if (task && (task.status === 'pending' || task.status === 'running')) {
-        fetchTaskStatus();
+    // Aggressive polling for task completion - check every 500ms
+    const completionCheckInterval = setInterval(async () => {
+      if (!redirecting) {
+        try {
+          console.log('TaskDetail: Aggressive polling check...');
+          const response = await tasksAPI.getById(taskId);
+          const currentStatus = response.data.status;
+          
+          console.log('TaskDetail: Polled status:', currentStatus, 'Current task status:', task?.status);
+          
+          // Update task state
+          setTask(prevTask => {
+            if (prevTask && prevTask.status !== currentStatus) {
+              console.log('TaskDetail: Status changed from', prevTask.status, 'to', currentStatus);
+              
+              // If task completed, trigger redirect immediately
+              if (currentStatus === 'completed' || currentStatus === 'failed' || currentStatus === 'partial') {
+                console.log('TaskDetail: Task completed! Triggering redirect in 100ms');
+                setTimeout(() => {
+                  if (!redirecting) {
+                    handleTaskCompletion(currentStatus);
+                  }
+                }, 100);
+              }
+            }
+            
+            return {
+              ...prevTask,
+              status: currentStatus,
+              finished_at: response.data.finished_at,
+              error_output: response.data.error_output
+            };
+          });
+        } catch (error) {
+          console.error('TaskDetail: Error in aggressive polling:', error);
+        }
       }
-    }, 3000);
+    }, 500); // Check every 500ms
 
     return () => {
       socketService.off('task_update', handleTaskUpdate);
       socketService.off('task_output', handleTaskOutput);
-      clearInterval(interval);
+      clearInterval(completionCheckInterval);
+      clearInterval(wsCheckInterval);
+      clearTimeout(redirectTimeoutRef.current);
+      clearInterval(countdownIntervalRef.current);
     };
-  }, [taskId]);
+  }, [taskId]); // Remove redirecting dependency to prevent cleanup
 
   const fetchTask = async () => {
     setLoading(true);
@@ -94,6 +161,15 @@ const TaskDetail = () => {
       if (response.data.output && output.length === 0) {
         setOutput(response.data.output.split('\n').filter(line => line.trim()));
       }
+      
+      // Check if task is already completed on first load
+      if (response.data.status === 'completed' || 
+          response.data.status === 'failed' || 
+          response.data.status === 'partial') {
+        console.log('TaskDetail: Task is already completed on load, status:', response.data.status);
+        // Trigger immediately for already completed tasks
+        handleTaskCompletion(response.data.status);
+      }
     } catch (error) {
       console.error('Failed to fetch task details');
     } finally {
@@ -101,20 +177,88 @@ const TaskDetail = () => {
     }
   };
 
-  const fetchTaskStatus = async () => {
-    try {
-      const response = await tasksAPI.getById(taskId);
-      // Only update task metadata, not the output
-      setTask(prevTask => ({
-        ...prevTask,
-        status: response.data.status,
-        finished_at: response.data.finished_at,
-        error_output: response.data.error_output
-      }));
-    } catch (error) {
-      console.error('Failed to fetch task status');
+  // Removed old fetchTaskStatus - using aggressive polling instead
+
+  const handleTaskCompletion = (status) => {
+    console.log('TaskDetail: handleTaskCompletion called with status:', status);
+    
+    // Prevent duplicate redirects
+    if (redirecting) {
+      console.log('TaskDetail: Already redirecting, ignoring duplicate completion');
+      return;
     }
+    
+    // Clear any existing timers
+    if (redirectTimeoutRef.current) {
+      clearTimeout(redirectTimeoutRef.current);
+      redirectTimeoutRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    
+    // Show completion notification
+    const statusText = status === 'completed' ? 'completed successfully' : 
+                      status === 'partial' ? 'completed with partial success' : 'failed';
+    
+    console.log('TaskDetail: Showing notification and starting redirect countdown');
+    
+    notification.success({
+      message: 'Task Execution Finished',
+      description: `Task ${statusText}. Redirecting to History page...`,
+      icon: <HistoryOutlined style={{ color: '#52c41a' }} />,
+      duration: 5,
+    });
+
+    // Start redirect countdown - shorter for better UX
+    setRedirecting(true);
+    setRedirectCountdown(3);
+    
+    // Create a more robust redirect mechanism
+    let countdown = 3;
+    
+    // Update countdown every second
+    countdownIntervalRef.current = setInterval(() => {
+      countdown--;
+      console.log('TaskDetail: Countdown:', countdown);
+      setRedirectCountdown(countdown);
+      
+      if (countdown <= 0) {
+        console.log('TaskDetail: Countdown reached 0, redirecting now!');
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+        
+        // Direct redirect
+        try {
+          console.log('TaskDetail: Executing navigation to /history');
+          navigate('/history');
+          console.log('TaskDetail: Navigation completed successfully');
+        } catch (error) {
+          console.error('TaskDetail: Navigation error:', error);
+          // Fallback: try window.location
+          window.location.href = '/history';
+        }
+      }
+    }, 1000);
   };
+
+  const cancelRedirect = () => {
+    console.log('TaskDetail: Cancelling redirect');
+    if (redirectTimeoutRef.current) {
+      clearTimeout(redirectTimeoutRef.current);
+      redirectTimeoutRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    setRedirecting(false);
+    setRedirectCountdown(0);
+    message.info('Auto-redirect cancelled');
+  };
+
+  // Removed old checkTaskCompletion - using aggressive polling instead
 
   const parseIPStatus = () => {
     if (!output || output.length === 0) return null;
@@ -252,12 +396,34 @@ const TaskDetail = () => {
             >
               Back to Tasks
             </Button>
-            <Title level={4} style={{ margin: 0 }}>Task Details</Title>
+            <Title level={4} style={{ margin: 0 }}>
+              Task Details
+              {task?.status === 'running' && (
+                <Tag color="processing" style={{ marginLeft: 8 }}>
+                  Monitoring for completion...
+                </Tag>
+              )}
+              {task?.status === 'running' && (
+                <Tag color={wsConnected ? "success" : "error"} style={{ marginLeft: 4 }}>
+                  WS: {wsConnected ? "Connected" : "Disconnected"}
+                </Tag>
+              )}
+            </Title>
           </Space>
         }
         extra={
           <Space>
             {getStatusTag(task.status)}
+            {(task.status === 'completed' || task.status === 'failed' || task.status === 'partial') && (
+              <Button
+                type="primary"
+                icon={<HistoryOutlined />}
+                onClick={() => navigate('/history')}
+                title="View in History"
+              >
+                View in History
+              </Button>
+            )}
             <Button
               icon={<ReloadOutlined />}
               onClick={fetchTask}
@@ -267,6 +433,66 @@ const TaskDetail = () => {
         }
         className="card-container"
       >
+        {/* Debug Info */}
+        {(task?.status === 'completed' || task?.status === 'failed' || task?.status === 'partial') && !redirecting && (
+          <Alert
+            message="Task Completed - Auto Redirect Not Working?"
+            description={
+              <Space>
+                <span>Task status: {task?.status}. Auto-redirect should have triggered.</span>
+                <Button 
+                  size="small" 
+                  type="primary"
+                  onClick={() => handleTaskCompletion(task.status)}
+                >
+                  Trigger Redirect Manually
+                </Button>
+                <Button 
+                  size="small" 
+                  onClick={() => navigate('/history')}
+                >
+                  Go to History
+                </Button>
+              </Space>
+            }
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
+
+        {/* Redirect Alert */}
+        {redirecting && (
+          <Alert
+            message="Task Completed - Auto Redirect"
+            description={
+              <Space>
+                <span>Redirecting to History page in {redirectCountdown} seconds...</span>
+                <Button 
+                  size="small" 
+                  onClick={cancelRedirect}
+                  type="link"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  size="small" 
+                  type="primary"
+                  onClick={() => navigate('/history')}
+                >
+                  Go Now
+                </Button>
+              </Space>
+            }
+            type="success"
+            showIcon
+            icon={<HistoryOutlined />}
+            style={{ marginBottom: 16 }}
+            closable
+            onClose={cancelRedirect}
+          />
+        )}
+
         <Row gutter={[16, 16]}>
           <Col span={24}>
             <Descriptions bordered column={2}>

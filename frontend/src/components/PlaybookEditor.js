@@ -26,7 +26,8 @@ import {
   LockOutlined,
   UserOutlined,
   SettingOutlined,
-  GroupOutlined
+  GroupOutlined,
+  KeyOutlined
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { playbooksAPI, hostsAPI, hostGroupsAPI, tasksAPI, credentialsAPI } from '../services/api';
@@ -190,8 +191,11 @@ const PlaybookEditor = () => {
     }
     
     const targetHostIds = getTargetHostIds();
-    if (!targetHostIds || targetHostIds.length === 0) {
-      message.warning('Please select at least one host or group with hosts');
+    // Allow execution without host selection if using dynamic targets via variables
+    const hasVariableTargets = variableValues && (variableValues.ips || variableValues.hosts || variableValues.target_hosts);
+    
+    if ((!targetHostIds || targetHostIds.length === 0) && !hasVariableTargets) {
+      message.warning('Please select at least one host/group, or use variables like "ips" to define dynamic targets');
       return;
     }
     
@@ -206,8 +210,12 @@ const PlaybookEditor = () => {
       }
     }
     
-    // If a credential is selected and not using custom auth, execute directly
-    if (selectedCredential && !customAuth) {
+    // Check for no-credentials first
+    if (selectedCredential === 'no-credentials') {
+      // Execute without credentials (use SSH keys)
+      executeWithoutCredentials();
+    } else if (selectedCredential && !customAuth) {
+      // If a credential is selected and not using custom auth, execute directly
       executeWithCredential();
     } else {
       // Show auth modal for custom credentials
@@ -237,7 +245,36 @@ const PlaybookEditor = () => {
         variables: variableValues
       });
 
-      message.success(`Playbook execution started on ${targetHostIds.length} host(s)`);
+      const hostCount = targetHostIds?.length || 0;
+      const targetInfo = hostCount > 0 ? `${hostCount} selected host(s)` : 'dynamic targets from variables';
+      message.success(`Playbook execution started on ${targetInfo}`);
+      
+      // Navigate to the task detail page
+      if (response.data.task && response.data.task.id) {
+        navigate(`/tasks/${response.data.task.id}`);
+      }
+      
+    } catch (error) {
+      message.error('Failed to execute playbook');
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  const executeWithoutCredentials = async () => {
+    setExecuting(true);
+    try {
+      const targetHostIds = getTargetHostIds();
+      const response = await tasksAPI.execute({
+        playbook_id: selectedPlaybook.id,
+        host_ids: targetHostIds,
+        // No username/password - backend will use SSH keys
+        variables: variableValues
+      });
+
+      const hostCount = targetHostIds?.length || 0;
+      const targetInfo = hostCount > 0 ? `${hostCount} selected host(s)` : 'dynamic targets from variables';
+      message.success(`Playbook execution started on ${targetInfo} using SSH keys`);
       
       // Navigate to the task detail page
       if (response.data.task && response.data.task.id) {
@@ -263,7 +300,9 @@ const PlaybookEditor = () => {
         variables: variableValues
       });
 
-      message.success(`Playbook execution started on ${targetHostIds.length} host(s)`);
+      const hostCount = targetHostIds?.length || 0;
+      const targetInfo = hostCount > 0 ? `${hostCount} selected host(s)` : 'dynamic targets from variables';
+      message.success(`Playbook execution started on ${targetInfo}`);
       setAuthModalVisible(false);
       
       // Navigate to the task detail page
@@ -281,13 +320,102 @@ const PlaybookEditor = () => {
   const editorOptions = {
     selectOnLineNumbers: true,
     automaticLayout: true,
-    minimap: { enabled: false },
+    minimap: { enabled: true, side: 'right' },
     fontSize: 14,
+    fontFamily: 'Consolas, "Courier New", monospace',
     lineNumbers: 'on',
     roundedSelection: false,
     scrollBeyondLastLine: false,
     readOnly: false,
-    theme: 'vs-dark',
+    wordWrap: 'on',
+    folding: true,
+    foldingHighlight: true,
+    showFoldingControls: 'always',
+    bracketPairColorization: { enabled: true },
+    guides: {
+      bracketPairs: true,
+      indentation: true,
+    },
+    suggest: {
+      enabled: true,
+      showKeywords: true,
+      showSnippets: true,
+    },
+    quickSuggestions: {
+      other: true,
+      comments: true,
+      strings: true,
+    },
+    acceptSuggestionOnCommitCharacter: true,
+    acceptSuggestionOnEnter: 'on',
+    accessibilitySupport: 'auto',
+    autoIndent: 'full',
+    contextmenu: true,
+    copyWithSyntaxHighlighting: true,
+    cursorBlinking: 'blink',
+    cursorSmoothCaretAnimation: true,
+    cursorWidth: 2,
+    disableLayerHinting: false,
+    disableMonospaceOptimizations: false,
+    dragAndDrop: true,
+    emptySelectionClipboard: true,
+    extraEditorClassName: '',
+    fastScrollSensitivity: 5,
+    find: {
+      cursorMoveOnType: true,
+      seedSearchStringFromSelection: true,
+      autoFindInSelection: 'never',
+    },
+    fixedOverflowWidgets: false,
+    hover: { enabled: true, delay: 300 },
+    inDiffEditor: false,
+    letterSpacing: 0,
+    lightbulb: { enabled: true },
+    lineDecorationsWidth: 10,
+    lineNumbersMinChars: 3,
+    links: true,
+    matchBrackets: 'always',
+    mouseWheelScrollSensitivity: 1,
+    mouseWheelZoom: true,
+    multiCursorMergeOverlapping: true,
+    multiCursorModifier: 'alt',
+    overviewRulerBorder: true,
+    overviewRulerLanes: 2,
+    padding: { top: 10, bottom: 10 },
+    parameterHints: { enabled: true, cycle: false },
+    peekWidgetDefaultFocus: 'tree',
+    renderControlCharacters: false,
+    renderFinalNewline: true,
+    renderLineHighlight: 'line',
+    renderValidationDecorations: 'editable',
+    renderWhitespace: 'selection',
+    revealHorizontalRightPadding: 30,
+    rulers: [],
+    scrollbar: {
+      useShadows: false,
+      verticalHasArrows: false,
+      horizontalHasArrows: false,
+      vertical: 'visible',
+      horizontal: 'visible',
+      verticalScrollbarSize: 14,
+      horizontalScrollbarSize: 12,
+      arrowSize: 11,
+    },
+    smoothScrolling: true,
+    snippetSuggestions: 'top',
+    stopRenderingLineAfter: 10000,
+    tabCompletion: 'on',
+    tabSize: 2,
+    insertSpaces: true,
+    detectIndentation: true,
+    trimAutoWhitespace: true,
+    useTabStops: true,
+    wordSeparators: '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?',
+    wordWrapBreakAfterCharacters: '\t})]?|&,;',
+    wordWrapBreakBeforeCharacters: '{([+',
+    wordWrapColumn: 80,
+    wrappingIndent: 'none',
+    wrappingStrategy: 'simple',
   };
 
   return (
@@ -425,12 +553,22 @@ const PlaybookEditor = () => {
               allowClear
               showSearch
               filterOption={(input, option) => {
+                if (option.value === 'no-credentials') {
+                  const searchText = 'no credentials ssh keys';
+                  return searchText.indexOf(input.toLowerCase()) >= 0;
+                }
                 const cred = credentials.find(c => c.id === option.value);
                 if (!cred) return false;
                 const searchText = `${cred.name} ${cred.username}`.toLowerCase();
                 return searchText.indexOf(input.toLowerCase()) >= 0;
               }}
             >
+              <Option key="no-credentials" value="no-credentials">
+                <Space>
+                  <KeyOutlined />
+                  <span style={{ color: '#52c41a' }}>No credentials (SSH keys)</span>
+                </Space>
+              </Option>
               {credentials.map(cred => (
                 <Option key={cred.id} value={cred.id}>
                   <Space>
@@ -468,7 +606,7 @@ const PlaybookEditor = () => {
             
             {!selectedCredential && !customAuth && (
               <div style={{ marginTop: 8, fontSize: '12px', color: '#ff4d4f' }}>
-                Please select credentials or enable custom authentication
+                Please select an authentication method: saved credentials, SSH keys, or custom authentication
               </div>
             )}
           </Col>
@@ -540,14 +678,118 @@ const PlaybookEditor = () => {
           />
         )}
 
-        <div style={{ height: '500px', border: '1px solid #d9d9d9', borderRadius: 6 }}>
+        <div 
+          style={{ 
+            height: '600px', 
+            border: '1px solid #3c3c3c',
+            borderRadius: 8,
+            overflow: 'hidden',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+            background: '#1e1e1e'
+          }}
+        >
+          <div 
+            style={{
+              height: '32px',
+              background: 'linear-gradient(to bottom, #3c3c3c, #2d2d30)',
+              borderBottom: '1px solid #2d2d30',
+              display: 'flex',
+              alignItems: 'center',
+              paddingLeft: '12px',
+              fontSize: '12px',
+              color: '#cccccc',
+              fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif'
+            }}
+          >
+            <span style={{ marginRight: '8px' }}>📄</span>
+            <span>{selectedPlaybook ? `${selectedPlaybook.name}.yml` : 'playbook.yml'}</span>
+            <div style={{ marginLeft: 'auto', marginRight: '12px', display: 'flex', gap: '4px' }}>
+              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#ff5f57' }}></div>
+              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#ffbd2e' }}></div>
+              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#28ca42' }}></div>
+            </div>
+          </div>
           <Editor
-            height="100%"
+            height="calc(100% - 32px)"
             language="yaml"
             value={editorContent}
             onChange={handleEditorChange}
             options={editorOptions}
             theme="vs-dark"
+            beforeMount={(monaco) => {
+              // Register YAML snippets for Ansible
+              monaco.languages.registerCompletionItemProvider('yaml', {
+                provideCompletionItems: (model, position) => {
+                  const suggestions = [
+                    {
+                      label: 'playbook',
+                      kind: monaco.languages.CompletionItemKind.Snippet,
+                      insertText: [
+                        '---',
+                        '- name: ${1:Playbook Description}',
+                        '  hosts: ${2:all}',
+                        '  become: ${3:yes}',
+                        '  tasks:',
+                        '    - name: ${4:Task Description}',
+                        '      ${5:module_name}:',
+                        '        ${6:parameter}: ${7:value}'
+                      ].join('\n'),
+                      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                      documentation: 'Basic Ansible playbook structure'
+                    },
+                    {
+                      label: 'task',
+                      kind: monaco.languages.CompletionItemKind.Snippet,
+                      insertText: [
+                        '- name: ${1:Task Description}',
+                        '  ${2:module_name}:',
+                        '    ${3:parameter}: ${4:value}'
+                      ].join('\n'),
+                      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                      documentation: 'Ansible task template'
+                    },
+                    {
+                      label: 'shell',
+                      kind: monaco.languages.CompletionItemKind.Snippet,
+                      insertText: [
+                        '- name: ${1:Execute shell command}',
+                        '  shell: ${2:command}',
+                        '  register: ${3:result}'
+                      ].join('\n'),
+                      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                      documentation: 'Shell module task'
+                    },
+                    {
+                      label: 'copy',
+                      kind: monaco.languages.CompletionItemKind.Snippet,
+                      insertText: [
+                        '- name: ${1:Copy file}',
+                        '  copy:',
+                        '    src: ${2:source_file}',
+                        '    dest: ${3:destination_path}',
+                        '    mode: ${4:0644}'
+                      ].join('\n'),
+                      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                      documentation: 'Copy module task'
+                    },
+                    {
+                      label: 'service',
+                      kind: monaco.languages.CompletionItemKind.Snippet,
+                      insertText: [
+                        '- name: ${1:Manage service}',
+                        '  service:',
+                        '    name: ${2:service_name}',
+                        '    state: ${3:started}',
+                        '    enabled: ${4:yes}'
+                      ].join('\n'),
+                      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                      documentation: 'Service module task'
+                    }
+                  ];
+                  return { suggestions };
+                }
+              });
+            }}
           />
         </div>
 

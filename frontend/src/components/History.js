@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Card,
   Table,
@@ -18,7 +18,9 @@ import {
   Collapse,
   Badge,
   List,
-  Avatar
+  Avatar,
+  Switch,
+  Tooltip
 } from 'antd';
 import {
   HistoryOutlined,
@@ -28,7 +30,9 @@ import {
   EyeOutlined,
   UserOutlined,
   DeleteOutlined,
-  DatabaseOutlined
+  DatabaseOutlined,
+  ReloadOutlined,
+  PauseCircleOutlined
 } from '@ant-design/icons';
 import { historyAPI, artifactsAPI } from '../services/api';
 import moment from 'moment';
@@ -45,16 +49,68 @@ const History = () => {
   const [selectedExecution, setSelectedExecution] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState(null);
+  const intervalRef = useRef(null);
+  const isPageVisible = useRef(true);
 
   useEffect(() => {
     fetchHistory();
+    
+    // Set up page visibility listener
+    const handleVisibilityChange = () => {
+      isPageVisible.current = !document.hidden;
+      if (!document.hidden && autoRefresh) {
+        // Page became visible, refresh immediately and restart interval
+        fetchHistory();
+        startAutoRefresh();
+      } else if (document.hidden) {
+        // Page became hidden, stop auto refresh
+        stopAutoRefresh();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopAutoRefresh();
+    };
   }, []);
+
+  // Auto-refresh effect
+  useEffect(() => {
+    if (autoRefresh && isPageVisible.current) {
+      startAutoRefresh();
+    } else {
+      stopAutoRefresh();
+    }
+    
+    return () => stopAutoRefresh();
+  }, [autoRefresh]);
+
+  const startAutoRefresh = () => {
+    stopAutoRefresh(); // Clear any existing interval
+    intervalRef.current = setInterval(() => {
+      if (isPageVisible.current && !loading) {
+        fetchHistory();
+      }
+    }, 10000); // Refresh every 10 seconds for history
+  };
+
+  const stopAutoRefresh = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
 
   const fetchHistory = async () => {
     setLoading(true);
     try {
       const response = await historyAPI.getAll();
       setHistory(response.data);
+      setLastRefresh(new Date());
     } catch (error) {
       console.error('Failed to fetch execution history');
     } finally {
@@ -344,13 +400,52 @@ const History = () => {
         title={
           <Space>
             <HistoryOutlined />
-            <Title level={4} style={{ margin: 0 }}>Execution History</Title>
+            <Title level={4} style={{ margin: 0 }}>
+              Execution History
+              {loading && autoRefresh && (
+                <ReloadOutlined 
+                  spin 
+                  style={{ 
+                    marginLeft: 8, 
+                    fontSize: '14px', 
+                    color: '#1890ff' 
+                  }} 
+                />
+              )}
+            </Title>
           </Space>
         }
         extra={
-          <Button onClick={fetchHistory} loading={loading}>
-            Refresh
-          </Button>
+          <Space>
+            <Tooltip title={autoRefresh ? "Auto-refresh is ON (every 10s)" : "Auto-refresh is OFF"}>
+              <Space>
+                <Switch
+                  checked={autoRefresh}
+                  onChange={setAutoRefresh}
+                  checkedChildren={<ReloadOutlined />}
+                  unCheckedChildren={<PauseCircleOutlined />}
+                  size="small"
+                />
+                <span style={{ 
+                  fontSize: '12px', 
+                  color: autoRefresh ? '#52c41a' : '#666',
+                  fontWeight: autoRefresh ? 'bold' : 'normal'
+                }}>
+                  Auto-refresh {autoRefresh && '●'}
+                </span>
+              </Space>
+            </Tooltip>
+            {lastRefresh && (
+              <Tooltip title={`Last refreshed: ${lastRefresh.toLocaleTimeString()}`}>
+                <span style={{ fontSize: '11px', color: '#999' }}>
+                  {moment(lastRefresh).fromNow()}
+                </span>
+              </Tooltip>
+            )}
+            <Button onClick={fetchHistory} loading={loading} icon={<ReloadOutlined />}>
+              Refresh
+            </Button>
+          </Space>
         }
         className="card-container"
       >

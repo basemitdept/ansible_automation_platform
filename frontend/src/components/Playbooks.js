@@ -20,6 +20,7 @@ import {
   CodeOutlined,
   SearchOutlined
 } from '@ant-design/icons';
+import Editor from '@monaco-editor/react';
 import { playbooksAPI } from '../services/api';
 import moment from 'moment';
 
@@ -33,7 +34,94 @@ const Playbooks = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingPlaybook, setEditingPlaybook] = useState(null);
   const [searchText, setSearchText] = useState('');
+  const [editorContent, setEditorContent] = useState('');
   const [form] = Form.useForm();
+
+  // VS Code-like editor options
+  const editorOptions = {
+    selectOnLineNumbers: true,
+    automaticLayout: true,
+    minimap: { enabled: true, side: 'right' },
+    fontSize: 14,
+    fontFamily: 'Consolas, "Courier New", monospace',
+    lineNumbers: 'on',
+    roundedSelection: false,
+    scrollBeyondLastLine: false,
+    readOnly: false,
+    wordWrap: 'on',
+    folding: true,
+    foldingHighlight: true,
+    showFoldingControls: 'always',
+    bracketPairColorization: { enabled: true },
+    guides: {
+      bracketPairs: true,
+      indentation: true,
+    },
+    suggest: {
+      enabled: true,
+      showKeywords: true,
+      showSnippets: true,
+    },
+    quickSuggestions: {
+      other: true,
+      comments: true,
+      strings: true,
+    },
+    acceptSuggestionOnCommitCharacter: true,
+    acceptSuggestionOnEnter: 'on',
+    accessibilitySupport: 'auto',
+    autoIndent: 'full',
+    contextmenu: true,
+    copyWithSyntaxHighlighting: true,
+    cursorBlinking: 'blink',
+    cursorSmoothCaretAnimation: true,
+    cursorWidth: 2,
+    dragAndDrop: true,
+    emptySelectionClipboard: true,
+    find: {
+      cursorMoveOnType: true,
+      seedSearchStringFromSelection: true,
+      autoFindInSelection: 'never',
+    },
+    hover: { enabled: true, delay: 300 },
+    lightbulb: { enabled: true },
+    lineDecorationsWidth: 10,
+    lineNumbersMinChars: 3,
+    links: true,
+    matchBrackets: 'always',
+    mouseWheelScrollSensitivity: 1,
+    mouseWheelZoom: true,
+    multiCursorMergeOverlapping: true,
+    multiCursorModifier: 'alt',
+    overviewRulerBorder: true,
+    overviewRulerLanes: 2,
+    padding: { top: 10, bottom: 10 },
+    parameterHints: { enabled: true, cycle: false },
+    renderControlCharacters: false,
+    renderFinalNewline: true,
+    renderLineHighlight: 'line',
+    renderValidationDecorations: 'editable',
+    renderWhitespace: 'selection',
+    scrollbar: {
+      useShadows: false,
+      verticalHasArrows: false,
+      horizontalHasArrows: false,
+      vertical: 'visible',
+      horizontal: 'visible',
+      verticalScrollbarSize: 14,
+      horizontalScrollbarSize: 12,
+    },
+    smoothScrolling: true,
+    snippetSuggestions: 'top',
+    tabCompletion: 'on',
+    tabSize: 2,
+    insertSpaces: true,
+    detectIndentation: true,
+    trimAutoWhitespace: true,
+    useTabStops: true,
+    wrappingIndent: 'none',
+    wrappingStrategy: 'simple',
+  };
 
   useEffect(() => {
     fetchPlaybooks();
@@ -68,8 +156,7 @@ const Playbooks = () => {
   const handleCreate = () => {
     setEditingPlaybook(null);
     form.resetFields();
-    form.setFieldsValue({
-      content: `---
+    const defaultContent = `---
 - name: Sample playbook
   hosts: all
   become: yes
@@ -85,13 +172,18 @@ const Playbooks = () => {
           - curl
           - wget
           - vim
-        state: present`
+        state: present`;
+    
+    setEditorContent(defaultContent);
+    form.setFieldsValue({
+      content: defaultContent
     });
     setModalVisible(true);
   };
 
   const handleEdit = (playbook) => {
     setEditingPlaybook(playbook);
+    setEditorContent(playbook.content || '');
     form.setFieldsValue(playbook);
     setModalVisible(true);
   };
@@ -106,13 +198,24 @@ const Playbooks = () => {
     }
   };
 
+  const handleEditorChange = (value) => {
+    setEditorContent(value || '');
+    form.setFieldsValue({ content: value || '' });
+  };
+
   const handleSubmit = async (values) => {
     try {
+      // Make sure we use the editor content
+      const submitValues = {
+        ...values,
+        content: editorContent
+      };
+      
       if (editingPlaybook) {
-        await playbooksAPI.update(editingPlaybook.id, values);
+        await playbooksAPI.update(editingPlaybook.id, submitValues);
         message.success('Playbook updated successfully');
       } else {
-        await playbooksAPI.create(values);
+        await playbooksAPI.create(submitValues);
         message.success('Playbook created successfully');
       }
       setModalVisible(false);
@@ -236,7 +339,7 @@ const Playbooks = () => {
         }
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
-        width={800}
+        width={1000}
         footer={null}
       >
         <Form
@@ -269,11 +372,120 @@ const Playbooks = () => {
             name="content"
             rules={[{ required: true, message: 'Please enter playbook content' }]}
           >
-            <TextArea
-              rows={15}
-              placeholder="Enter your Ansible playbook in YAML format. Use {{ variable_name }} syntax for variables that will be prompted during execution."
-              style={{ fontFamily: 'monospace', fontSize: '13px' }}
-            />
+            <div 
+              style={{ 
+                height: '500px', 
+                border: '1px solid #3c3c3c',
+                borderRadius: 8,
+                overflow: 'hidden',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                background: '#1e1e1e'
+              }}
+            >
+              <div 
+                style={{
+                  height: '32px',
+                  background: 'linear-gradient(to bottom, #3c3c3c, #2d2d30)',
+                  borderBottom: '1px solid #2d2d30',
+                  display: 'flex',
+                  alignItems: 'center',
+                  paddingLeft: '12px',
+                  fontSize: '12px',
+                  color: '#cccccc',
+                  fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif'
+                }}
+              >
+                <span style={{ marginRight: '8px' }}>📄</span>
+                <span>{editingPlaybook ? `${editingPlaybook.name}.yml` : 'new-playbook.yml'}</span>
+                <div style={{ marginLeft: 'auto', marginRight: '12px', display: 'flex', gap: '4px' }}>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#ff5f57' }}></div>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#ffbd2e' }}></div>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#28ca42' }}></div>
+                </div>
+              </div>
+              <Editor
+                height="calc(100% - 32px)"
+                language="yaml"
+                value={editorContent}
+                onChange={handleEditorChange}
+                options={editorOptions}
+                theme="vs-dark"
+                beforeMount={(monaco) => {
+                  // Register YAML snippets for Ansible
+                  monaco.languages.registerCompletionItemProvider('yaml', {
+                    provideCompletionItems: (model, position) => {
+                      const suggestions = [
+                        {
+                          label: 'playbook',
+                          kind: monaco.languages.CompletionItemKind.Snippet,
+                          insertText: [
+                            '---',
+                            '- name: ${1:Playbook Description}',
+                            '  hosts: ${2:all}',
+                            '  become: ${3:yes}',
+                            '  tasks:',
+                            '    - name: ${4:Task Description}',
+                            '      ${5:module_name}:',
+                            '        ${6:parameter}: ${7:value}'
+                          ].join('\n'),
+                          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                          documentation: 'Basic Ansible playbook structure'
+                        },
+                        {
+                          label: 'task',
+                          kind: monaco.languages.CompletionItemKind.Snippet,
+                          insertText: [
+                            '- name: ${1:Task Description}',
+                            '  ${2:module_name}:',
+                            '    ${3:parameter}: ${4:value}'
+                          ].join('\n'),
+                          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                          documentation: 'Ansible task template'
+                        },
+                        {
+                          label: 'shell',
+                          kind: monaco.languages.CompletionItemKind.Snippet,
+                          insertText: [
+                            '- name: ${1:Execute shell command}',
+                            '  shell: ${2:command}',
+                            '  register: ${3:result}'
+                          ].join('\n'),
+                          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                          documentation: 'Shell module task'
+                        },
+                        {
+                          label: 'copy',
+                          kind: monaco.languages.CompletionItemKind.Snippet,
+                          insertText: [
+                            '- name: ${1:Copy file}',
+                            '  copy:',
+                            '    src: ${2:source_file}',
+                            '    dest: ${3:destination_path}',
+                            '    mode: ${4:0644}'
+                          ].join('\n'),
+                          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                          documentation: 'Copy module task'
+                        },
+                        {
+                          label: 'service',
+                          kind: monaco.languages.CompletionItemKind.Snippet,
+                          insertText: [
+                            '- name: ${1:Manage service}',
+                            '  service:',
+                            '    name: ${2:service_name}',
+                            '    state: ${3:started}',
+                            '    enabled: ${4:yes}'
+                          ].join('\n'),
+                          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                          documentation: 'Service module task'
+                        }
+                      ];
+                      return { suggestions };
+                    }
+                  });
+                }}
+              />
+            </div>
           </Form.Item>
 
           <Form.Item>

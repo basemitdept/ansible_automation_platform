@@ -8,7 +8,9 @@ services:
       POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./backend/base_tables.sql:/docker-entrypoint-initdb.d/02-base_tables.sql
+      - ./backend/localhost_setup.sql:/docker-entrypoint-initdb.d/03-localhost_setup.sql
     ports:
       - "5432:5432"
     networks:
@@ -27,6 +29,7 @@ services:
     environment:
       DATABASE_URL: postgresql://ansible_user:ansible_password@postgres:5432/ansible_automation
       FLASK_ENV: development
+      ANSIBLE_SSH_USER: ansible
     volumes:
       - ./playbooks:/app/playbooks
       - ./backend:/app

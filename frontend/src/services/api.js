@@ -71,4 +71,12 @@ export const webhooksAPI = {
   trigger: (token, data) => api.post(`/webhook/trigger/${token}`, data)
 };
 
+export const apiTokensAPI = {
+  getAll: () => api.get('/tokens'),
+  create: (data) => api.post('/tokens', data),
+  update: (id, data) => api.put(`/tokens/${id}`, data),
+  delete: (id) => api.delete(`/tokens/${id}`),
+  regenerate: (id) => api.post(`/tokens/${id}/regenerate`)
+};
+
 export default api; 

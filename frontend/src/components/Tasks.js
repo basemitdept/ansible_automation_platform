@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card,
@@ -10,7 +10,9 @@ import {
   Progress,
   Empty,
   message,
-  Popconfirm
+  Popconfirm,
+  Switch,
+  Tooltip
 } from 'antd';
 import {
   ClockCircleOutlined,
@@ -18,7 +20,9 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   EyeOutlined,
-  DeleteOutlined
+  DeleteOutlined,
+  ReloadOutlined,
+  PauseCircleOutlined
 } from '@ant-design/icons';
 import { tasksAPI } from '../services/api';
 import socketService from '../services/socket';
@@ -29,7 +33,11 @@ const { Title } = Typography;
 const Tasks = () => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState(null);
   const navigate = useNavigate();
+  const intervalRef = useRef(null);
+  const isPageVisible = useRef(true);
 
   useEffect(() => {
     fetchTasks();
@@ -45,20 +53,75 @@ const Tasks = () => {
             : task
         )
       );
+      
+      // If a task is completed/failed, it will be removed on next refresh
+      if (data.status === 'completed' || data.status === 'failed' || data.status === 'partial') {
+        // Trigger a refresh after a short delay to remove completed tasks
+        setTimeout(() => {
+          if (isPageVisible.current) {
+            fetchTasks();
+          }
+        }, 2000);
+      }
     };
 
     socketService.on('task_update', handleTaskUpdate);
+    
+    // Set up page visibility listener
+    const handleVisibilityChange = () => {
+      isPageVisible.current = !document.hidden;
+      if (!document.hidden && autoRefresh) {
+        // Page became visible, refresh immediately and restart interval
+        fetchTasks();
+        startAutoRefresh();
+      } else if (document.hidden) {
+        // Page became hidden, stop auto refresh
+        stopAutoRefresh();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       socketService.off('task_update', handleTaskUpdate);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopAutoRefresh();
     };
   }, []);
+
+  // Auto-refresh effect
+  useEffect(() => {
+    if (autoRefresh && isPageVisible.current) {
+      startAutoRefresh();
+    } else {
+      stopAutoRefresh();
+    }
+    
+    return () => stopAutoRefresh();
+  }, [autoRefresh]);
+
+  const startAutoRefresh = () => {
+    stopAutoRefresh(); // Clear any existing interval
+    intervalRef.current = setInterval(() => {
+      if (isPageVisible.current && !loading) {
+        fetchTasks();
+      }
+    }, 5000); // Refresh every 5 seconds
+  };
+
+  const stopAutoRefresh = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
 
   const fetchTasks = async () => {
     setLoading(true);
     try {
       const response = await tasksAPI.getAll();
       setTasks(response.data);
+      setLastRefresh(new Date());
     } catch (error) {
       console.error('Failed to fetch tasks');
     } finally {
@@ -239,13 +302,52 @@ const Tasks = () => {
         title={
           <Space>
             <ClockCircleOutlined />
-            <Title level={4} style={{ margin: 0 }}>Running Tasks</Title>
+            <Title level={4} style={{ margin: 0 }}>
+              Running Tasks
+              {loading && autoRefresh && (
+                <ReloadOutlined 
+                  spin 
+                  style={{ 
+                    marginLeft: 8, 
+                    fontSize: '14px', 
+                    color: '#1890ff' 
+                  }} 
+                />
+              )}
+            </Title>
           </Space>
         }
         extra={
-          <Button onClick={fetchTasks} loading={loading}>
-            Refresh
-          </Button>
+          <Space>
+            <Tooltip title={autoRefresh ? "Auto-refresh is ON (every 5s)" : "Auto-refresh is OFF"}>
+              <Space>
+                <Switch
+                  checked={autoRefresh}
+                  onChange={setAutoRefresh}
+                  checkedChildren={<ReloadOutlined />}
+                  unCheckedChildren={<PauseCircleOutlined />}
+                  size="small"
+                />
+                <span style={{ 
+                  fontSize: '12px', 
+                  color: autoRefresh ? '#52c41a' : '#666',
+                  fontWeight: autoRefresh ? 'bold' : 'normal'
+                }}>
+                  Auto-refresh {autoRefresh && '●'}
+                </span>
+              </Space>
+            </Tooltip>
+            {lastRefresh && (
+              <Tooltip title={`Last refreshed: ${lastRefresh.toLocaleTimeString()}`}>
+                <span style={{ fontSize: '11px', color: '#999' }}>
+                  {moment(lastRefresh).fromNow()}
+                </span>
+              </Tooltip>
+            )}
+            <Button onClick={fetchTasks} loading={loading} icon={<ReloadOutlined />}>
+              Refresh
+            </Button>
+          </Space>
         }
         className="card-container"
       >

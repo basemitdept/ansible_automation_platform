@@ -2,12 +2,12 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from sqlalchemy import text
-from models import db, Playbook, Host, HostGroup, Task, ExecutionHistory, Artifact, Credential, Webhook
+from models import db, Playbook, Host, HostGroup, Task, ExecutionHistory, Artifact, Credential, Webhook, ApiToken
 import os
 import threading
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import time
 import secrets
@@ -319,6 +319,38 @@ def delete_host(host_id):
 # Task routes
 @app.route('/api/tasks', methods=['GET'])
 def get_tasks():
+    # Persistent fix: Auto-correct running tasks with unrealistic start times
+    # This prevents the "180 minutes" duration issue
+    current_time = datetime.utcnow()
+    one_hour_ago = current_time - timedelta(hours=1)
+    
+    # Find running tasks with started_at more than 1 hour ago (likely incorrect)
+    incorrect_tasks = Task.query.filter(
+        Task.status == 'running',
+        Task.started_at.isnot(None),
+        Task.started_at < one_hour_ago
+    ).all()
+    
+    # Fix their started_at timestamps
+    for task in incorrect_tasks:
+        print(f"Auto-fixing task {task.id} started_at from {task.started_at} to {current_time}")
+        task.started_at = current_time
+    
+    # Clear started_at for pending tasks (they shouldn't have it set)
+    pending_tasks_with_start = Task.query.filter(
+        Task.status == 'pending',
+        Task.started_at.isnot(None)
+    ).all()
+    
+    for task in pending_tasks_with_start:
+        print(f"Auto-clearing started_at for pending task {task.id}")
+        task.started_at = None
+    
+    # Commit any fixes
+    if incorrect_tasks or pending_tasks_with_start:
+        db.session.commit()
+        print(f"Auto-fixed {len(incorrect_tasks)} running tasks and {len(pending_tasks_with_start)} pending tasks")
+    
     tasks = Task.query.filter(Task.status.in_(['pending', 'running'])).all()
     return jsonify([task.to_dict() for task in tasks])
 
@@ -472,9 +504,16 @@ def execute_playbook():
     playbook_id = data['playbook_id']
     host_ids = data.get('host_ids', [])  # Support multiple hosts
     host_id = data.get('host_id')  # Support single host for backward compatibility
-    username = data['username']
-    password = data['password']
+    username = data.get('username')
+    password = data.get('password')
     variables = data.get('variables', {})  # User-provided variable values
+    
+    # Make SSH credentials optional - use default if not provided
+    if not username:
+        username = os.environ.get('ANSIBLE_SSH_USER', 'ansible')
+        print(f"Using default SSH user: {username} (SSH key authentication)")
+    
+    # Note: password can be None - Ansible will use SSH keys if no password provided
     
     playbook = Playbook.query.get_or_404(playbook_id)
     
@@ -482,7 +521,10 @@ def execute_playbook():
     if host_id and not host_ids:
         host_ids = [host_id]
     elif not host_ids:
-        return jsonify({'error': 'No hosts specified'}), 400
+        # Allow empty host_ids if using dynamic targets via variables
+        if not variables or 'ips' not in variables:
+            return jsonify({'error': 'No hosts specified and no dynamic targets (ips variable) provided'}), 400
+        host_ids = []  # Empty host list for dynamic targets
     
     # Get all selected hosts
     hosts = []
@@ -491,28 +533,44 @@ def execute_playbook():
         hosts.append(host)
     
     # Create a single task for the multi-host execution
-    # Use the first host as the primary host for the task record
-    primary_host = hosts[0]
-    host_names = ', '.join([host.name for host in hosts])
-    host_list_json = json.dumps([host.to_dict() for host in hosts])
+    if hosts:
+        # Use the first host as the primary host for the task record
+        primary_host = hosts[0]
+        host_names = ', '.join([host.name for host in hosts])
+        host_list_json = json.dumps([host.to_dict() for host in hosts])
+        target_info = f"Multi-host execution targeting: {host_names}"
+        
+        task = Task(
+            playbook_id=playbook_id,
+            host_id=primary_host.id,
+            status='pending',
+            host_list=host_list_json
+        )
+    else:
+        # Dynamic targets from variables
+        host_list_json = json.dumps([])
+        dynamic_targets = variables.get('ips', 'dynamic targets') if variables else 'dynamic targets'
+        target_info = f"Dynamic execution targeting: {dynamic_targets}"
+        
+        task = Task(
+            playbook_id=playbook_id,
+            host_id=None,  # No specific host for dynamic execution
+            status='pending',
+            host_list=host_list_json
+        )
     
-    task = Task(
-        playbook_id=playbook_id,
-        host_id=primary_host.id,
-        status='pending',
-        host_list=host_list_json
-    )
     db.session.add(task)
     db.session.commit()
     
-    # Store the multi-host information in the task output initially
-    task.output = f"Multi-host execution targeting: {host_names}"
+    # Store the execution information in the task output initially
+    task.output = target_info
     db.session.commit()
     
     # Execute the playbook against all hosts in a single run
     try:
-        # Update task status to running
+        # Update task status to running and set actual start time
         task.status = 'running'
+        task.started_at = datetime.utcnow()
         db.session.commit()
         
         # Emit initial task status update
@@ -647,10 +705,23 @@ def regenerate_webhook_token(webhook_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-# Public webhook trigger endpoint
-@app.route('/api/webhook/trigger/<token>', methods=['POST'])
-def trigger_webhook(token):
-    webhook = Webhook.query.filter_by(token=token).first()
+# Public webhook trigger endpoint - requires API token authentication
+@app.route('/api/webhook/trigger/<webhook_token>', methods=['POST'])
+def trigger_webhook(webhook_token):
+    # Get API token from Authorization header
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'Permission denied. API token required in Authorization header.'}), 401
+    
+    api_token_value = auth_header[7:]  # Remove 'Bearer ' prefix
+    
+    # Authenticate API token
+    api_token = authenticate_api_token(api_token_value)
+    if not api_token:
+        return jsonify({'error': 'Permission denied. Invalid or expired API token.'}), 401
+    
+    # Find webhook by token
+    webhook = Webhook.query.filter_by(token=webhook_token).first()
     
     if not webhook:
         return jsonify({'error': 'Invalid webhook token'}), 404
@@ -699,23 +770,29 @@ def trigger_webhook(token):
     if 'variables' in data:
         variables.update(data['variables'])
     
-    # Get credentials
+    # Get SSH username - use from request, webhook default, or system default
     username = None
     password = None
     
-    if 'credentials' in data:
-        # Use credentials from request
+    # Priority 1: Credentials from request payload
+    if 'credentials' in data and data['credentials']:
         username = data['credentials'].get('username')
         password = data['credentials'].get('password')
+    
+    # Priority 2: Default credential from webhook configuration
     elif webhook.credential_id:
-        # Use default credential
         credential = webhook.credential
         if credential:
             username = credential.username
             password = credential.password  # Note: In production, this should be encrypted
     
-    if not username or not password:
-        return jsonify({'error': 'No valid credentials provided'}), 400
+    # Priority 3: Use system default SSH user (for SSH key authentication)
+    if not username:
+        # Use a default SSH user - this can be configured via environment variable
+        username = os.environ.get('ANSIBLE_SSH_USER', 'ansible')
+        print(f"Using default SSH user: {username} (SSH key authentication)")
+    
+    # Note: password can be None - Ansible will use SSH keys if no password provided
     
     # Create task for execution
     primary_host = hosts[0]
@@ -779,6 +856,7 @@ def run_webhook_playbook(task_id, playbook_data, host_objects, username, passwor
             return
             
         task.status = 'running'
+        task.started_at = datetime.utcnow()
         db.session.commit()
         print(f"Task {task_id} status updated to running")
     
@@ -852,24 +930,67 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
     try:
         # Create temporary inventory file with all hosts
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as inv_file:
+            # Add hosts to both 'targets' and 'all' groups for compatibility
             inv_content = "[targets]\n"
             for host in hosts:
-                inv_content += f"{host.hostname}\n"
+                # Add both the hostname and an alias using the host's name for flexibility
+                if host.hostname != host.name:
+                    inv_content += f"{host.name} ansible_host={host.hostname}\n"
+                else:
+                    inv_content += f"{host.hostname}\n"
             
-            inv_content += f"""
-[targets:vars]
-ansible_user={username}
-ansible_ssh_pass={password}
-ansible_host_key_checking=False
-ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password
-ansible_connection=ssh
-ansible_ssh_timeout=30
-ansible_connect_timeout=30
-"""
+            # Add dynamic IPs from variables if 'ips' variable is provided
+            dynamic_ips = set()
+            if variables and 'ips' in variables:
+                ips_value = variables['ips']
+                if isinstance(ips_value, str):
+                    # Split comma-separated IPs and add them to inventory
+                    for ip in ips_value.split(','):
+                        ip = ip.strip()
+                        if ip and ip not in ['all', 'targets']:  # Skip special keywords
+                            dynamic_ips.add(ip)
+                            inv_content += f"{ip}\n"
+            
+            # Also add to 'all' group for playbooks that use 'hosts: all'
+            inv_content += "\n[all]\n"
+            for host in hosts:
+                # Add both the hostname and an alias using the host's name for flexibility
+                if host.hostname != host.name:
+                    inv_content += f"{host.name} ansible_host={host.hostname}\n"
+                else:
+                    inv_content += f"{host.hostname}\n"
+            
+            # Add dynamic IPs to 'all' group as well
+            for ip in dynamic_ips:
+                inv_content += f"{ip}\n"
+            
+            # Add host variables section that applies to all hosts
+            inv_content += f"\n[all:vars]\n"
+            inv_content += f"ansible_user={username}\n"
+            
+            # Add password if provided, otherwise use SSH key authentication
+            if password:
+                inv_content += f"ansible_ssh_pass={password}\n"
+                inv_content += f"ansible_become_pass={password}\n"  # Add sudo password
+                inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password\n"
+            else:
+                # Use SSH key authentication
+                inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey\n"
+            
+            # Common settings
+            inv_content += "ansible_host_key_checking=False\n"
+            inv_content += "ansible_connection=ssh\n"
+            inv_content += "ansible_ssh_timeout=30\n"
+            inv_content += "ansible_connect_timeout=30\n"
+            
             inv_file.write(inv_content)
             inventory_path = inv_file.name
         
         print(f"Created multi-host inventory file: {inventory_path}")
+        if password:
+            print(f"Using SSH password authentication for user: {username}")
+        else:
+            print(f"Using SSH key authentication for user: {username}")
         
         # Get playbook file path
         playbook_path = os.path.join(PLAYBOOKS_DIR, f"{playbook.name}.yml")
@@ -902,6 +1023,7 @@ ansible_connect_timeout=30
             '-e', 'ansible_host_key_checking=False',
             '-e', f'ansible_user={username}',
             '-e', f'ansible_ssh_pass={password}',
+            '-e', f'ansible_become_pass={password}',  # Add sudo password
             '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password"',
             '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
         ]
@@ -952,8 +1074,31 @@ ansible_connect_timeout=30
                 task.error_output = '\n'.join(error_lines)
                 task.finished_at = datetime.utcnow()
                 
-                # Determine final status
-                final_status = 'completed' if process.returncode == 0 else 'failed'
+                # Analyze the output to determine success/failure per host (like the regular function)
+                full_output = '\n'.join(output_lines)
+                analysis_result = analyze_ansible_output(full_output, hosts)
+                host_results = analysis_result['host_results']
+                task_failures = analysis_result['task_failures']
+                
+                # Determine overall status based on host results
+                successful_hosts = [h for h, status in host_results.items() if status == 'success']
+                failed_hosts = [h for h, status in host_results.items() if status == 'failed']
+                partial_hosts = [h for h, status in host_results.items() if status == 'partial']
+                total_hosts_in_results = len(host_results)
+                
+                # Calculate overall status (same logic as regular function)
+                if total_hosts_in_results == 0:
+                    final_status = 'failed'
+                elif len(failed_hosts) == total_hosts_in_results:
+                    final_status = 'failed'
+                elif len(successful_hosts) == total_hosts_in_results:
+                    final_status = 'completed'
+                elif len(successful_hosts) > 0 and len(failed_hosts) == 0:
+                    final_status = 'completed'
+                else:
+                    final_status = 'partial'
+                
+                print(f"Webhook execution analysis: {len(successful_hosts)} success, {len(partial_hosts)} partial, {len(failed_hosts)} failed -> {final_status}")
                 task.status = final_status
                 
                 # Create execution history entry for webhook execution
@@ -979,8 +1124,22 @@ ansible_connect_timeout=30
                         output_lines = task.output.split('\n')
                         print(f"Total output lines: {len(output_lines)}")
                         
+                        # Include dynamic hosts from the analysis results for artifact extraction
+                        all_hosts_for_artifacts = list(hosts)  # Start with original hosts
+                        
+                        # Add dynamic hosts that were found in the execution
+                        for dynamic_host in host_results.keys():
+                            if not any(h.hostname == dynamic_host for h in hosts):
+                                # Create a temporary host object for artifact extraction
+                                class DynamicHost:
+                                    def __init__(self, hostname):
+                                        self.hostname = hostname
+                                        self.name = hostname
+                                all_hosts_for_artifacts.append(DynamicHost(dynamic_host))
+                                print(f"Added dynamic host {dynamic_host} for webhook artifact extraction")
+                        
                         # Use the existing artifact extraction function
-                        output_artifacts = extract_register_from_output(output_lines, history.id, hosts)
+                        output_artifacts = extract_register_from_output(output_lines, history.id, all_hosts_for_artifacts)
                         
                         # Save all artifacts
                         for artifact in output_artifacts:
@@ -991,18 +1150,11 @@ ansible_connect_timeout=30
                     except Exception as artifact_error:
                         print(f"Error processing webhook artifacts: {artifact_error}")
                 
-                if process.returncode == 0:
-                    socketio.emit('task_update', {
-                        'task_id': str(task_id),
-                        'status': 'completed',
-                        'message': f'Webhook execution completed successfully'
-                    })
-                else:
-                    socketio.emit('task_update', {
-                        'task_id': str(task_id),
-                        'status': 'failed',
-                        'message': f'Webhook execution failed with return code {process.returncode}'
-                    })
+                socketio.emit('task_update', {
+                    'task_id': str(task_id),
+                    'status': final_status,
+                    'message': f'Webhook execution {final_status}'
+                })
                 
                 db.session.commit()
         
@@ -1175,7 +1327,12 @@ def extract_register_from_output(output_lines, execution_id, hosts):
     """
     artifacts = []
     print(f"Starting artifact extraction for {len(hosts)} hosts")
+    print(f"Hosts for artifact extraction: {[h.hostname for h in hosts]}")
     print(f"Total output lines to process: {len(output_lines)}")
+    
+    # Debug: Check if there are any register-related lines in the output
+    register_lines = [line for line in output_lines if 'register:' in line.lower() or '" => {' in line]
+    print(f"Found {len(register_lines)} potential register/output lines")
     
     current_task = None
     current_host = None
@@ -1192,7 +1349,7 @@ def extract_register_from_output(output_lines, execution_id, hosts):
             # Detect task names
             if "TASK [" in line and "] **" in line:
                 current_task = line.split("TASK [")[1].split("]")[0].strip()
-                print(f"Found task: {current_task}")
+                print(f"Found task: '{current_task}' at line {i}")
                 current_task_status = None  # Reset status for new task
                 in_json_block = False
                 json_lines = []
@@ -1219,11 +1376,11 @@ def extract_register_from_output(output_lines, execution_id, hosts):
                 if task_status:
                     current_host = hostname
                     current_task_status = task_status  # Store the status for multi-line JSON processing
-                    print(f"Found {task_status} result for {hostname}: {line[:100]}...")
+                    print(f"Found {task_status} result for {hostname} in task '{current_task}': {line[:100]}...")
                     
                     # Check if this line has JSON output
                     if "=> {" in line:
-                        print(f"Found JSON output for {hostname} in task {current_task} (status: {task_status})")
+                        print(f"Found JSON output for {hostname} in task '{current_task}' (status: {task_status})")
                         # Start collecting JSON
                         json_start = line.find("=> {") + 3
                         json_content = line[json_start:]
@@ -1482,6 +1639,10 @@ def analyze_ansible_output(output, hosts):
             
         if in_recap and line.strip():
             # Parse recap lines like: "hostname : ok=5 changed=2 unreachable=0 failed=0"
+            # Also handle dynamic IPs that might not be in the hosts list
+            line_lower = line.lower()
+            
+            # Check all known hosts first
             for host in hosts:
                 if host.hostname in line:
                     if 'unreachable=' in line and 'failed=' in line:
@@ -1515,6 +1676,35 @@ def analyze_ansible_output(output, hosts):
                             else:
                                 host_results[host.hostname] = 'success'
                                 print(f"Host {host.hostname} marked as success: no failures detected in recap (parsing failed)")
+            
+            # Also check for dynamic IPs in the recap that might not be in hosts list
+            if ':' in line and ('ok=' in line or 'failed=' in line):
+                # Try to extract IP/hostname from the line
+                try:
+                    recap_host = line.split(':')[0].strip()
+                    if recap_host and recap_host not in [h.hostname for h in hosts]:
+                        # This is a dynamic host, add it to results
+                        if 'unreachable=' in line and 'failed=' in line:
+                            failed_match = line.split('failed=')[1].split()[0]
+                            unreachable_match = line.split('unreachable=')[1].split()[0]
+                            failed_count = int(failed_match)
+                            unreachable_count = int(unreachable_match)
+                            
+                            if unreachable_count > 0:
+                                host_results[recap_host] = 'failed'
+                                print(f"Dynamic host {recap_host} marked as failed: {unreachable_count} unreachable")
+                            elif failed_count > 0:
+                                host_results[recap_host] = 'partial'
+                                print(f"Dynamic host {recap_host} marked as partial: {failed_count} tasks failed")
+                            else:
+                                host_results[recap_host] = 'success'
+                                print(f"Dynamic host {recap_host} marked as success: no failed tasks")
+                            
+                            # Initialize task_failures for dynamic host
+                            if recap_host not in task_failures:
+                                task_failures[recap_host] = {'failed_tasks': failed_count, 'total_tasks': failed_count}
+                except (ValueError, IndexError) as e:
+                    print(f"Failed to parse dynamic host recap line: {line}, error: {e}")
     
     # If no recap found, look for other indicators
     if all(status == 'unknown' for status in host_results.values()):
@@ -1529,10 +1719,21 @@ def analyze_ansible_output(output, hosts):
                 else:
                     host_results[host.hostname] = 'success'
     
-    # Default unknown hosts to failed if we couldn't determine status
+    # Default unknown hosts to success if we couldn't determine status but no explicit failures were found
     for host_name, status in host_results.items():
         if status == 'unknown':
-            host_results[host_name] = 'failed'
+            # Check if there were any explicit failures for this host
+            if task_failures[host_name]['failed_tasks'] > 0:
+                host_results[host_name] = 'partial'
+                print(f"Host {host_name} defaulted to partial: had {task_failures[host_name]['failed_tasks']} failed tasks")
+            elif 'UNREACHABLE!' in output or 'FAILED!' in output or 'fatal:' in output:
+                # Only mark as failed if there are explicit failure indicators in the output
+                host_results[host_name] = 'failed'
+                print(f"Host {host_name} defaulted to failed: explicit failure indicators found")
+            else:
+                # If no failures detected, assume success
+                host_results[host_name] = 'success'
+                print(f"Host {host_name} defaulted to success: no failures detected")
     
     # Add task failure info to results
     result_data = {
@@ -1552,6 +1753,7 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
             return
             
         task.status = 'running'
+        task.started_at = datetime.utcnow()
         db.session.commit()
         print(f"Task {task_id} status updated to running")
     
@@ -1565,24 +1767,67 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
     try:
         # Create temporary inventory file with all hosts
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as inv_file:
+            # Add hosts to both 'targets' and 'all' groups for compatibility
             inv_content = "[targets]\n"
             for host in hosts:
-                inv_content += f"{host.hostname}\n"
+                # Add both the hostname and an alias using the host's name for flexibility
+                if host.hostname != host.name:
+                    inv_content += f"{host.name} ansible_host={host.hostname}\n"
+                else:
+                    inv_content += f"{host.hostname}\n"
             
-            inv_content += f"""
-[targets:vars]
-ansible_user={username}
-ansible_ssh_pass={password}
-ansible_host_key_checking=False
-ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password
-ansible_connection=ssh
-ansible_ssh_timeout=30
-ansible_connect_timeout=30
-"""
+            # Add dynamic IPs from variables if 'ips' variable is provided
+            dynamic_ips = set()
+            if variables and 'ips' in variables:
+                ips_value = variables['ips']
+                if isinstance(ips_value, str):
+                    # Split comma-separated IPs and add them to inventory
+                    for ip in ips_value.split(','):
+                        ip = ip.strip()
+                        if ip and ip not in ['all', 'targets']:  # Skip special keywords
+                            dynamic_ips.add(ip)
+                            inv_content += f"{ip}\n"
+            
+            # Also add to 'all' group for playbooks that use 'hosts: all'
+            inv_content += "\n[all]\n"
+            for host in hosts:
+                # Add both the hostname and an alias using the host's name for flexibility
+                if host.hostname != host.name:
+                    inv_content += f"{host.name} ansible_host={host.hostname}\n"
+                else:
+                    inv_content += f"{host.hostname}\n"
+            
+            # Add dynamic IPs to 'all' group as well
+            for ip in dynamic_ips:
+                inv_content += f"{ip}\n"
+            
+            # Add host variables section that applies to all hosts
+            inv_content += f"\n[all:vars]\n"
+            inv_content += f"ansible_user={username}\n"
+            
+            # Add password if provided, otherwise use SSH key authentication
+            if password:
+                inv_content += f"ansible_ssh_pass={password}\n"
+                inv_content += f"ansible_become_pass={password}\n"  # Add sudo password
+                inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password\n"
+            else:
+                # Use SSH key authentication
+                inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey\n"
+            
+            # Common settings
+            inv_content += "ansible_host_key_checking=False\n"
+            inv_content += "ansible_connection=ssh\n"
+            inv_content += "ansible_ssh_timeout=30\n"
+            inv_content += "ansible_connect_timeout=30\n"
+            
             inv_file.write(inv_content)
             inventory_path = inv_file.name
         
         print(f"Created multi-host inventory file: {inventory_path}")
+        if password:
+            print(f"Using password authentication for user: {username}")
+        else:
+            print(f"Using SSH key authentication for user: {username}")
         
         # Debug: Print inventory content
         with open(inventory_path, 'r') as f:
@@ -1632,11 +1877,23 @@ ansible_connect_timeout=30
             playbook_path,
             '-vvv',  # Maximum verbosity for debugging
             '-e', 'ansible_host_key_checking=False',
-            '-e', f'ansible_user={username}',
-            '-e', f'ansible_ssh_pass={password}',
-            '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password"',
-            '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
+            '-e', f'ansible_user={username}'
         ]
+        
+        # Add authentication-specific parameters
+        if password:
+            cmd.extend([
+                '-e', f'ansible_ssh_pass={password}',
+                '-e', f'ansible_become_pass={password}',  # Add sudo password
+                '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password"',
+                '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
+            ])
+        else:
+            cmd.extend([
+                '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey"',
+                '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey'
+            ])
+        
         
         # Add user-defined variables to the command
         if variables:
@@ -1729,26 +1986,41 @@ ansible_connect_timeout=30
         failed_hosts = [h for h, status in host_results.items() if status == 'failed']
         partial_hosts = [h for h, status in host_results.items() if status == 'partial']
         
+        # Total hosts should include both original hosts and any dynamic hosts found in results
+        total_hosts_in_results = len(host_results)
+        
         print(f"Host status summary:")
         print(f"  Successful hosts: {successful_hosts}")
         print(f"  Failed hosts: {failed_hosts}")
         print(f"  Partial hosts: {partial_hosts}")
-        print(f"  Total hosts: {len(hosts)}")
+        print(f"  Original hosts: {len(hosts)}")
+        print(f"  Total hosts in results: {total_hosts_in_results}")
         
-        # Calculate overall status
-        if len(failed_hosts) == len(hosts):
-            overall_status = 'failed'  # All hosts failed
-            print(f"Overall status: FAILED (all {len(hosts)} hosts failed)")
-        elif len(successful_hosts) == len(hosts):
-            overall_status = 'completed'  # All hosts succeeded completely
-            print(f"Overall status: COMPLETED (all {len(hosts)} hosts succeeded)")
+        # Calculate overall status based on actual results, not just original host count
+        if total_hosts_in_results == 0:
+            # No hosts were processed - this is a failure
+            overall_status = 'failed'
+            print(f"Overall status: FAILED (no hosts processed)")
+        elif len(failed_hosts) == total_hosts_in_results:
+            # All processed hosts failed
+            overall_status = 'failed'
+            print(f"Overall status: FAILED (all {total_hosts_in_results} processed hosts failed)")
+        elif len(successful_hosts) == total_hosts_in_results:
+            # All processed hosts succeeded completely
+            overall_status = 'completed'
+            print(f"Overall status: COMPLETED (all {total_hosts_in_results} processed hosts succeeded)")
+        elif len(successful_hosts) > 0 and len(failed_hosts) == 0:
+            # Some succeeded, some partial, but none completely failed
+            overall_status = 'completed'
+            print(f"Overall status: COMPLETED ({len(successful_hosts)} success, {len(partial_hosts)} partial - no complete failures)")
         else:
-            overall_status = 'partial'  # Mixed results: some hosts failed, some succeeded, or some had partial task failures
+            # Mixed results: some hosts failed, some succeeded, or some had partial task failures
+            overall_status = 'partial'
             print(f"Overall status: PARTIAL (mixed results: {len(successful_hosts)} success, {len(partial_hosts)} partial, {len(failed_hosts)} failed)")
         
         # Create detailed status message
         status_details = f"\n{'='*50}\nEXECUTION SUMMARY\n{'='*50}\n"
-        status_details += f"Total Hosts: {len(hosts)}\n"
+        status_details += f"Total Hosts Processed: {total_hosts_in_results}\n"
         status_details += f"Successful: {len(successful_hosts)} hosts\n"
         status_details += f"Partial: {len(partial_hosts)} hosts\n"
         status_details += f"Failed: {len(failed_hosts)} hosts\n"
@@ -1844,7 +2116,21 @@ ansible_connect_timeout=30
                         if any(host.hostname in line for host in fresh_hosts):
                             print(f"Debug line {i}: {line[:100]}...")
                     
-                    output_artifacts = extract_register_from_output(output_lines, history.id, fresh_hosts)
+                    # Include dynamic hosts from the analysis results for artifact extraction
+                    all_hosts_for_artifacts = list(fresh_hosts)  # Start with database hosts
+                    
+                    # Add dynamic hosts that were found in the execution
+                    for dynamic_host in host_results.keys():
+                        if not any(h.hostname == dynamic_host for h in fresh_hosts):
+                            # Create a temporary host object for artifact extraction
+                            class DynamicHost:
+                                def __init__(self, hostname):
+                                    self.hostname = hostname
+                                    self.name = hostname
+                            all_hosts_for_artifacts.append(DynamicHost(dynamic_host))
+                            print(f"Added dynamic host {dynamic_host} for artifact extraction")
+                    
+                    output_artifacts = extract_register_from_output(output_lines, history.id, all_hosts_for_artifacts)
                     
                     # Save all artifacts
                     for artifact in output_artifacts:
@@ -1971,6 +2257,7 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
             return
             
         task.status = 'running'
+        task.started_at = datetime.utcnow()
         db.session.commit()
         print(f"Task {task_id} status updated to running")
     
@@ -1984,22 +2271,36 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
     try:
         # Create temporary inventory file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as inv_file:
-            inv_content = f"""[targets]
-{host.hostname}
-
-[targets:vars]
-ansible_user={username}
-ansible_ssh_pass={password}
-ansible_host_key_checking=False
-ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password
-ansible_connection=ssh
-ansible_ssh_timeout=30
-ansible_connect_timeout=30
-"""
+            # Add host to both 'targets' and 'all' groups for compatibility
+            if host.hostname != host.name:
+                inv_content = f"[targets]\n{host.name} ansible_host={host.hostname}\n\n[all]\n{host.name} ansible_host={host.hostname}\n\n[all:vars]\n"
+            else:
+                inv_content = f"[targets]\n{host.hostname}\n\n[all]\n{host.hostname}\n\n[all:vars]\n"
+            inv_content += f"ansible_user={username}\n"
+            
+            # Add password if provided, otherwise use SSH key authentication
+            if password:
+                inv_content += f"ansible_ssh_pass={password}\n"
+                inv_content += f"ansible_become_pass={password}\n"  # Add sudo password
+                inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password\n"
+            else:
+                # Use SSH key authentication
+                inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey\n"
+            
+            # Common settings
+            inv_content += "ansible_host_key_checking=False\n"
+            inv_content += "ansible_connection=ssh\n"
+            inv_content += "ansible_ssh_timeout=30\n"
+            inv_content += "ansible_connect_timeout=30\n"
+            
             inv_file.write(inv_content)
             inventory_path = inv_file.name
         
         print(f"Created inventory file: {inventory_path}")
+        if password:
+            print(f"Using password authentication for user: {username}")
+        else:
+            print(f"Using SSH key authentication for user: {username}")
         
         # Debug: Print inventory content
         with open(inventory_path, 'r') as f:
@@ -2049,11 +2350,23 @@ ansible_connect_timeout=30
             playbook_path,
             '-vvv',  # Maximum verbosity for debugging
             '-e', 'ansible_host_key_checking=False',
-            '-e', f'ansible_user={username}',
-            '-e', f'ansible_ssh_pass={password}',
-            '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password"',
-            '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
+            '-e', f'ansible_user={username}'
         ]
+        
+        # Add authentication-specific parameters
+        if password:
+            cmd.extend([
+                '-e', f'ansible_ssh_pass={password}',
+                '-e', f'ansible_become_pass={password}',  # Add sudo password
+                '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password"',
+                '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
+            ])
+        else:
+            cmd.extend([
+                '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey"',
+                '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey'
+            ])
+        
         
         # Add user-defined variables to the command
         if variables:
@@ -2064,9 +2377,8 @@ ansible_connect_timeout=30
         
         # Set environment variables for Ansible
         env = os.environ.copy()
-        env.update({
+        base_env = {
             'ANSIBLE_HOST_KEY_CHECKING': 'False',
-            'ANSIBLE_SSH_ARGS': '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password',
             'ANSIBLE_TIMEOUT': '30',
             'ANSIBLE_CONNECT_TIMEOUT': '30',
             'ANSIBLE_SSH_TIMEOUT': '30',
@@ -2074,7 +2386,15 @@ ansible_connect_timeout=30
             'PYTHONUNBUFFERED': '1',  # Force Python to flush output immediately
             'ANSIBLE_FORCE_COLOR': 'false',  # Disable color codes that might interfere
             'ANSIBLE_STDOUT_CALLBACK': 'default'  # Use default callback for consistent output
-        })
+        }
+        
+        # Set authentication-specific environment variables
+        if password:
+            base_env['ANSIBLE_SSH_ARGS'] = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
+        else:
+            base_env['ANSIBLE_SSH_ARGS'] = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey'
+        
+        env.update(base_env)
         
         process = subprocess.Popen(
             cmd,
@@ -2161,6 +2481,107 @@ ansible_connect_timeout=30
             'status': 'failed',
             'message': f'Error: {str(e)}'
         })
+
+# API Token endpoints
+@app.route('/api/tokens', methods=['GET'])
+def get_api_tokens():
+    tokens = ApiToken.query.order_by(ApiToken.created_at.desc()).all()
+    return jsonify([token.to_dict() for token in tokens])
+
+@app.route('/api/tokens', methods=['POST'])
+def create_api_token():
+    data = request.json
+    
+    # Generate a secure token
+    token = secrets.token_hex(32)  # 64 character hex string
+    
+    api_token = ApiToken(
+        name=data['name'],
+        token=token,
+        description=data.get('description', ''),
+        enabled=data.get('enabled', True),
+        expires_at=datetime.fromisoformat(data['expires_at']) if data.get('expires_at') else None
+    )
+    
+    try:
+        db.session.add(api_token)
+        db.session.commit()
+        return jsonify(api_token.to_dict()), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/tokens/<token_id>', methods=['PUT'])
+def update_api_token(token_id):
+    api_token = ApiToken.query.get_or_404(token_id)
+    data = request.json
+    
+    if 'name' in data:
+        api_token.name = data['name']
+    if 'description' in data:
+        api_token.description = data['description']
+    if 'enabled' in data:
+        api_token.enabled = data['enabled']
+    if 'expires_at' in data:
+        api_token.expires_at = datetime.fromisoformat(data['expires_at']) if data['expires_at'] else None
+    
+    api_token.updated_at = datetime.utcnow()
+    
+    try:
+        db.session.commit()
+        return jsonify(api_token.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/tokens/<token_id>', methods=['DELETE'])
+def delete_api_token(token_id):
+    api_token = ApiToken.query.get_or_404(token_id)
+    
+    try:
+        db.session.delete(api_token)
+        db.session.commit()
+        return jsonify({'message': 'API token deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tokens/<token_id>/regenerate', methods=['POST'])
+def regenerate_api_token(token_id):
+    api_token = ApiToken.query.get_or_404(token_id)
+    
+    # Generate new token
+    api_token.token = secrets.token_hex(32)
+    api_token.updated_at = datetime.utcnow()
+    api_token.usage_count = 0  # Reset usage count
+    api_token.last_used = None  # Reset last used
+    
+    try:
+        db.session.commit()
+        return jsonify(api_token.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+def authenticate_api_token(token):
+    """Authenticate API token and update usage statistics"""
+    if not token:
+        return None
+    
+    api_token = ApiToken.query.filter_by(token=token, enabled=True).first()
+    if not api_token:
+        return None
+    
+    # Check if token is expired
+    if api_token.expires_at and api_token.expires_at < datetime.utcnow():
+        return None
+    
+    # Update usage statistics
+    api_token.last_used = datetime.utcnow()
+    api_token.usage_count += 1
+    db.session.commit()
+    
+    return api_token
 
 @socketio.on('connect')
 def handle_connect():

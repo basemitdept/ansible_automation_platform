@@ -97,12 +97,16 @@ A modern web-based platform for automating Ansible playbook execution with a bea
 1. Visit **Running Tasks** to see active executions
 2. Click **View** on any task to see live output
 3. Real-time updates via WebSocket connections
+4. **Auto-refresh**: Tasks automatically refresh every 5 seconds
+5. Completed tasks automatically move to History
 
 ### 5. Viewing History
 
 1. Check **History** for past executions
 2. Filter by status, user, or date
 3. View detailed output and error logs
+4. **Auto-refresh**: History automatically updates every 10 seconds
+5. Toggle auto-refresh on/off as needed
 
 ## Configuration
 
