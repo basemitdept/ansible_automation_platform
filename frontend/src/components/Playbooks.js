@@ -10,7 +10,11 @@ import {
   Popconfirm,
   Space,
   Typography,
-  Tag
+  Tag,
+  Upload,
+  List,
+  Divider,
+  Tooltip
 } from 'antd';
 import {
   PlusOutlined,
@@ -18,14 +22,19 @@ import {
   DeleteOutlined,
   BookOutlined,
   CodeOutlined,
-  SearchOutlined
+  SearchOutlined,
+  UploadOutlined,
+  FileOutlined,
+  DownloadOutlined,
+  InboxOutlined
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
-import { playbooksAPI } from '../services/api';
+import { playbooksAPI, playbookFilesAPI } from '../services/api';
 import moment from 'moment';
 
 const { Title } = Typography;
 const { TextArea } = Input;
+const { Dragger } = Upload;
 
 const Playbooks = () => {
   const [playbooks, setPlaybooks] = useState([]);
@@ -36,6 +45,13 @@ const Playbooks = () => {
   const [searchText, setSearchText] = useState('');
   const [editorContent, setEditorContent] = useState('');
   const [form] = Form.useForm();
+  
+  // File management state
+  const [playbookFiles, setPlaybookFiles] = useState([]);
+  const [fileListLoading, setFileListLoading] = useState(false);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [canUploadFiles, setCanUploadFiles] = useState(false);
+  const [tempFiles, setTempFiles] = useState([]); // Store files before playbook is saved
 
   // VS Code-like editor options
   const editorOptions = {
@@ -186,6 +202,12 @@ const Playbooks = () => {
     setEditorContent(playbook.content || '');
     form.setFieldsValue(playbook);
     setModalVisible(true);
+    setCanUploadFiles(true); // Enable file uploads for existing playbooks
+    
+    // Fetch files for existing playbook
+    if (playbook.id) {
+      fetchPlaybookFiles(playbook.id);
+    }
   };
 
   const handleDelete = async (id) => {
@@ -194,9 +216,166 @@ const Playbooks = () => {
       message.success('Playbook deleted successfully');
       fetchPlaybooks();
     } catch (error) {
-      console.error('Delete error:', error);
-      const errorMessage = error.response?.data?.error || error.message || 'Failed to delete playbook';
-      message.error(errorMessage);
+      message.error('Failed to delete playbook');
+    }
+  };
+
+  // File management functions
+  const fetchPlaybookFiles = async (playbookId) => {
+    if (!playbookId) return;
+    
+    try {
+      setFileListLoading(true);
+      const response = await playbookFilesAPI.getAll(playbookId);
+      setPlaybookFiles(response.data);
+    } catch (error) {
+      message.error('Failed to fetch playbook files');
+    } finally {
+      setFileListLoading(false);
+    }
+  };
+
+  const handleFileUpload = async (info) => {
+    const { file } = info;
+    
+    if (file.status === 'uploading') {
+      setUploadLoading(true);
+      return false;
+    }
+
+    if (file.status === 'done' || file.status === 'error') {
+      setUploadLoading(false);
+    }
+
+    // If playbook doesn't exist yet, store files temporarily
+    if (!editingPlaybook?.id) {
+      // Check if file with same name already exists in temp files
+      const existingTempIndex = tempFiles.findIndex(tf => tf.filename === file.name);
+      
+      const tempFile = {
+        id: Date.now() + Math.random(), // Temporary ID
+        filename: file.name,
+        file_size: file.size,
+        mime_type: file.type,
+        description: '',
+        fileObject: file, // Store the actual file object
+        isTemp: true
+      };
+      
+      if (existingTempIndex >= 0) {
+        // Replace existing temp file
+        setTempFiles(prev => {
+          const updated = [...prev];
+          updated[existingTempIndex] = tempFile;
+          return updated;
+        });
+        message.warning(`${file.name} replaced in queue (will be uploaded with playbook)`);
+      } else {
+        // Add new temp file
+        setTempFiles(prev => [...prev, tempFile]);
+        message.success(`${file.name} ready to upload (will be saved with playbook)`);
+      }
+      
+      return false;
+    }
+
+    // If playbook exists, upload immediately
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('description', '');
+
+    try {
+      setUploadLoading(true);
+      const response = await playbookFilesAPI.upload(editingPlaybook.id, formData);
+      
+      // Check if file was replaced
+      if (response.data.replaced) {
+        message.warning(response.data.message || `${file.name} replaced successfully`);
+      } else {
+        message.success(response.data.message || `${file.name} uploaded successfully`);
+      }
+      
+      fetchPlaybookFiles(editingPlaybook.id);
+    } catch (error) {
+      message.error(`Failed to upload ${file.name}`);
+    } finally {
+      setUploadLoading(false);
+    }
+
+    return false;
+  };
+
+  const handleFileDelete = async (fileId) => {
+    if (!editingPlaybook?.id) return;
+
+    try {
+      await playbookFilesAPI.delete(editingPlaybook.id, fileId);
+      message.success('File deleted successfully');
+      fetchPlaybookFiles(editingPlaybook.id);
+    } catch (error) {
+      message.error('Failed to delete file');
+    }
+  };
+
+  const handleFileDownload = async (fileId, filename) => {
+    if (!editingPlaybook?.id) return;
+
+    try {
+      const response = await playbookFilesAPI.download(editingPlaybook.id, fileId);
+      
+      // Create blob and download
+      const blob = new Blob([response.data]);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      message.error('Failed to download file');
+    }
+  };
+
+  const uploadTempFiles = async (playbookId) => {
+    if (tempFiles.length === 0) return;
+
+    try {
+      setUploadLoading(true);
+      
+      let replacedCount = 0;
+      let uploadedCount = 0;
+      
+      for (const tempFile of tempFiles) {
+        const formData = new FormData();
+        formData.append('file', tempFile.fileObject);
+        formData.append('description', tempFile.description);
+        
+        const response = await playbookFilesAPI.upload(playbookId, formData);
+        
+        if (response.data.replaced) {
+          replacedCount++;
+        } else {
+          uploadedCount++;
+        }
+      }
+      
+      // Show appropriate success message
+      if (replacedCount > 0 && uploadedCount > 0) {
+        message.success(`${uploadedCount} file(s) uploaded, ${replacedCount} file(s) replaced`);
+      } else if (replacedCount > 0) {
+        message.warning(`${replacedCount} file(s) replaced successfully`);
+      } else {
+        message.success(`${uploadedCount} file(s) uploaded successfully`);
+      }
+      
+      setTempFiles([]); // Clear temp files
+      fetchPlaybookFiles(playbookId);
+    } catch (error) {
+      message.error('Failed to upload some files');
+    } finally {
+      setUploadLoading(false);
     }
   };
 
@@ -213,17 +392,39 @@ const Playbooks = () => {
         content: editorContent
       };
       
-      if (editingPlaybook) {
+      let savedPlaybook;
+      const wasEditing = editingPlaybook && editingPlaybook.id; // Track if we were editing existing
+      
+      if (wasEditing) {
         await playbooksAPI.update(editingPlaybook.id, submitValues);
         message.success('Playbook updated successfully');
+        savedPlaybook = { ...editingPlaybook, ...submitValues };
+        // Close modal for updates
+        setModalVisible(false);
+        setPlaybookFiles([]);
+        setEditingPlaybook(null);
+        setCanUploadFiles(false);
+        form.resetFields();
+        setEditorContent('');
       } else {
-        await playbooksAPI.create(submitValues);
-        message.success('Playbook created successfully');
+        const response = await playbooksAPI.create(submitValues);
+        message.success('Playbook created successfully - uploading files...');
+        savedPlaybook = response.data;
+        console.log('Created playbook:', savedPlaybook); // Debug log
+        // Set the newly created playbook as editing so files can be uploaded
+        setEditingPlaybook(savedPlaybook);
+        setCanUploadFiles(true); // Force enable file uploads
+        
+        // Upload any temporary files
+        await uploadTempFiles(savedPlaybook.id);
+        
+        fetchPlaybookFiles(savedPlaybook.id);
+        // Keep modal open for new playbooks so user can upload files
       }
-      setModalVisible(false);
+      
       fetchPlaybooks();
     } catch (error) {
-      message.error(`Failed to ${editingPlaybook ? 'update' : 'create'} playbook`);
+      message.error(`Failed to ${editingPlaybook?.id ? 'update' : 'create'} playbook`);
     }
   };
 
@@ -340,7 +541,15 @@ const Playbooks = () => {
           </Space>
         }
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          setModalVisible(false);
+          setPlaybookFiles([]);
+          setEditingPlaybook(null);
+          setCanUploadFiles(false);
+          setTempFiles([]);
+          form.resetFields();
+          setEditorContent('');
+        }}
         width={1000}
         footer={null}
       >
@@ -367,7 +576,134 @@ const Playbooks = () => {
             <Input placeholder="Brief description of what this playbook does" />
           </Form.Item>
 
+          {/* File Upload Section */}
+          <>
+            <Divider orientation="left">
+              <Space>
+                <FileOutlined />
+                Playbook Files (Optional)
+              </Space>
+            </Divider>
+            
+            <div style={{ marginBottom: 16 }}>
+              <Dragger
+                name="file"
+                multiple={true}
+                customRequest={handleFileUpload}
+                showUploadList={false}
+                disabled={uploadLoading}
+                style={{ marginBottom: 16 }}
+              >
+                <p className="ant-upload-drag-icon">
+                  <InboxOutlined />
+                </p>
+                <p className="ant-upload-text">
+                  Click or drag files here to upload
+                </p>
+                <p className="ant-upload-hint">
+                  Upload scripts, config files, or other assets needed by your playbook.
+                  Supported formats: .py, .sh, .conf, .json, .xml, .tar, .zip, etc.
+                </p>
+              </Dragger>
 
+              {/* Show temporary files (before playbook is saved) */}
+              {tempFiles.length > 0 && (
+                <>
+                  <div style={{ marginBottom: 8, fontWeight: 'bold', color: '#1890ff' }}>
+                    Files ready to upload ({tempFiles.length}):
+                  </div>
+                  <List
+                    size="small"
+                    bordered
+                    dataSource={tempFiles}
+                    renderItem={(file) => (
+                      <List.Item
+                        actions={[
+                          <Tooltip title="Remove">
+                            <Button
+                              type="text"
+                              danger
+                              icon={<DeleteOutlined />}
+                              onClick={() => setTempFiles(prev => prev.filter(f => f.id !== file.id))}
+                              size="small"
+                            />
+                          </Tooltip>
+                        ]}
+                      >
+                        <List.Item.Meta
+                          avatar={<FileOutlined style={{ color: '#1890ff' }} />}
+                          title={<span style={{ color: '#1890ff' }}>{file.filename}</span>}
+                          description={
+                            <Space>
+                              <Tag color="blue">{(file.file_size / 1024).toFixed(1)} KB</Tag>
+                              {file.mime_type && <Tag color="green">{file.mime_type}</Tag>}
+                              <Tag color="orange">Ready to upload</Tag>
+                            </Space>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </>
+              )}
+
+              {/* Show saved files (after playbook is saved) */}
+              {playbookFiles.length > 0 && (
+                <>
+                  <div style={{ marginBottom: 8, fontWeight: 'bold', color: '#52c41a' }}>
+                    Uploaded files ({playbookFiles.length}):
+                  </div>
+                  <List
+                    size="small"
+                    bordered
+                    loading={fileListLoading}
+                    dataSource={playbookFiles}
+                    renderItem={(file) => (
+                      <List.Item
+                        actions={[
+                          <Tooltip title="Download">
+                            <Button
+                              type="text"
+                              icon={<DownloadOutlined />}
+                              onClick={() => handleFileDownload(file.id, file.filename)}
+                              size="small"
+                            />
+                          </Tooltip>,
+                          <Tooltip title="Delete">
+                            <Popconfirm
+                              title="Are you sure you want to delete this file?"
+                              onConfirm={() => handleFileDelete(file.id)}
+                              okText="Yes"
+                              cancelText="No"
+                            >
+                              <Button
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                size="small"
+                              />
+                            </Popconfirm>
+                          </Tooltip>
+                        ]}
+                      >
+                        <List.Item.Meta
+                          avatar={<FileOutlined style={{ color: '#52c41a' }} />}
+                          title={<span style={{ color: '#52c41a' }}>{file.filename}</span>}
+                          description={
+                            <Space>
+                              <Tag color="blue">{(file.file_size / 1024).toFixed(1)} KB</Tag>
+                              {file.mime_type && <Tag color="green">{file.mime_type}</Tag>}
+                              <Tag color="success">Uploaded</Tag>
+                            </Space>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </>
+              )}
+            </div>
+          </>
 
           <Form.Item
             label="Playbook Content (YAML)"
@@ -493,9 +829,28 @@ const Playbooks = () => {
           <Form.Item>
             <Space>
               <Button type="primary" htmlType="submit">
-                {editingPlaybook ? 'Update' : 'Create'} Playbook
+                {editingPlaybook?.id ? 'Update' : 'Create'} Playbook
               </Button>
-              <Button onClick={() => setModalVisible(false)}>
+              {editingPlaybook?.id && (
+                <Button onClick={() => {
+                  setModalVisible(false);
+                  setPlaybookFiles([]);
+                  setEditingPlaybook(null);
+                  setCanUploadFiles(false);
+                  form.resetFields();
+                  setEditorContent('');
+                }}>
+                  Done
+                </Button>
+              )}
+              <Button onClick={() => {
+                setModalVisible(false);
+                setPlaybookFiles([]);
+                setEditingPlaybook(null);
+                setCanUploadFiles(false);
+                form.resetFields();
+                setEditorContent('');
+              }}>
                 Cancel
               </Button>
             </Space>

@@ -11,6 +11,8 @@ services:
       - ./backend/init.sql:/docker-entrypoint-initdb.d/01-init.sql
       - ./backend/base_tables.sql:/docker-entrypoint-initdb.d/02-base_tables.sql
       - ./backend/localhost_setup.sql:/docker-entrypoint-initdb.d/03-localhost_setup.sql
+      - ./backend/playbook_files_migration.sql:/docker-entrypoint-initdb.d/04-playbook_files_migration.sql
+      - ./backend/fix_host_id_nullable.sql:/docker-entrypoint-initdb.d/05-fix_host_id_nullable.sql
     ports:
       - "5432:5432"
     networks:
@@ -34,7 +36,7 @@ services:
       - ./playbooks:/app/playbooks
       - ./backend:/app
     ports:
-      - "5000:5000"
+      - "5003:5000"
     networks:
       - ansible_network
     restart: unless-stopped

@@ -74,6 +74,9 @@ const PlaybookEditor = () => {
     try {
       const response = await hostsAPI.getAll();
       setHosts(response.data);
+      
+      // No automatic host selection - user must choose manually
+      
     } catch (error) {
       message.error('Failed to fetch hosts');
     }
@@ -191,15 +194,14 @@ const PlaybookEditor = () => {
     }
     
     const targetHostIds = getTargetHostIds();
-    // Allow execution without host selection if using dynamic targets via variables
-    const hasVariableTargets = variableValues && (variableValues.ips || variableValues.hosts || variableValues.target_hosts);
     
-    if ((!targetHostIds || targetHostIds.length === 0) && !hasVariableTargets) {
-      message.warning('Please select at least one host/group, or use variables like "ips" to define dynamic targets');
+    // Require host selection - no longer allow empty hosts
+    if (!targetHostIds || targetHostIds.length === 0) {
+      message.warning('Please select at least one host or host group');
       return;
     }
     
-    // Validate variables if they exist
+    // Only validate variables if they exist in the playbook
     const detectedVariables = extractVariablesFromContent(selectedPlaybook.content);
     if (detectedVariables.length > 0) {
       try {
@@ -246,7 +248,15 @@ const PlaybookEditor = () => {
       });
 
       const hostCount = targetHostIds?.length || 0;
-      const targetInfo = hostCount > 0 ? `${hostCount} selected host(s)` : 'dynamic targets from variables';
+      let targetInfo;
+      if (hostCount > 0) {
+        targetInfo = `${hostCount} selected host(s)`;
+      } else if (variableValues && (variableValues.ips || variableValues.hosts)) {
+        targetInfo = 'dynamic targets from variables';
+      } else {
+        targetInfo = 'playbook-defined targets';
+      }
+      
       message.success(`Playbook execution started on ${targetInfo}`);
       
       // Navigate to the task detail page
@@ -273,7 +283,15 @@ const PlaybookEditor = () => {
       });
 
       const hostCount = targetHostIds?.length || 0;
-      const targetInfo = hostCount > 0 ? `${hostCount} selected host(s)` : 'dynamic targets from variables';
+      let targetInfo;
+      if (hostCount > 0) {
+        targetInfo = `${hostCount} selected host(s)`;
+      } else if (variableValues && (variableValues.ips || variableValues.hosts)) {
+        targetInfo = 'dynamic targets from variables';
+      } else {
+        targetInfo = 'playbook-defined targets';
+      }
+      
       message.success(`Playbook execution started on ${targetInfo} using SSH keys`);
       
       // Navigate to the task detail page
@@ -301,7 +319,15 @@ const PlaybookEditor = () => {
       });
 
       const hostCount = targetHostIds?.length || 0;
-      const targetInfo = hostCount > 0 ? `${hostCount} selected host(s)` : 'dynamic targets from variables';
+      let targetInfo;
+      if (hostCount > 0) {
+        targetInfo = `${hostCount} selected host(s)`;
+      } else if (variableValues && (variableValues.ips || variableValues.hosts)) {
+        targetInfo = 'dynamic targets from variables';
+      } else {
+        targetInfo = 'playbook-defined targets';
+      }
+      
       message.success(`Playbook execution started on ${targetInfo}`);
       setAuthModalVisible(false);
       
@@ -453,13 +479,16 @@ const PlaybookEditor = () => {
           </Col>
           <Col span={8}>
             <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>
-              Target Selection:
+              Target Selection: <span style={{ color: '#ff4d4f' }}>*</span>
             </label>
             <div style={{ marginBottom: 8 }}>
               <Radio.Group 
                 value={targetType} 
                 onChange={(e) => {
-                  setTargetType(e.target.value);
+                  const newTargetType = e.target.value;
+                  setTargetType(newTargetType);
+                  
+                  // Clear selections when switching target types
                   setSelectedHosts([]);
                   setSelectedGroups([]);
                 }}
@@ -604,7 +633,13 @@ const PlaybookEditor = () => {
               Execute Playbook
             </Button>
             
-            {!selectedCredential && !customAuth && (
+            {getTargetCount() === 0 && (
+              <div style={{ marginTop: 8, fontSize: '12px', color: '#ff4d4f' }}>
+                Please select at least one host or host group to execute the playbook
+              </div>
+            )}
+            
+            {getTargetCount() > 0 && !selectedCredential && !customAuth && (
               <div style={{ marginTop: 8, fontSize: '12px', color: '#ff4d4f' }}>
                 Please select an authentication method: saved credentials, SSH keys, or custom authentication
               </div>

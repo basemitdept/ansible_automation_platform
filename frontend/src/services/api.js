@@ -17,6 +17,20 @@ export const playbooksAPI = {
   delete: (id) => api.delete(`/playbooks/${id}`),
 };
 
+// Playbook Files API
+export const playbookFilesAPI = {
+  getAll: (playbookId) => api.get(`/playbooks/${playbookId}/files`),
+  upload: (playbookId, formData) => api.post(`/playbooks/${playbookId}/files`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  }),
+  delete: (playbookId, fileId) => api.delete(`/playbooks/${playbookId}/files/${fileId}`),
+  download: (playbookId, fileId) => api.get(`/playbooks/${playbookId}/files/${fileId}/download`, {
+    responseType: 'blob',
+  }),
+};
+
 // Host Groups API
 export const hostGroupsAPI = {
   getAll: () => api.get('/host-groups'),

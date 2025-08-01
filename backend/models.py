@@ -296,24 +296,50 @@ class ApiToken(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(255), nullable=False)
     token = db.Column(db.String(64), nullable=False, unique=True)
-    description = db.Column(db.Text)
     enabled = db.Column(db.Boolean, default=True)
+    description = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_used = db.Column(db.DateTime)
-    usage_count = db.Column(db.Integer, default=0)
-    expires_at = db.Column(db.DateTime)  # Optional expiration date
     
     def to_dict(self):
         return {
             'id': str(self.id),
             'name': self.name,
             'token': self.token,
-            'description': self.description,
             'enabled': self.enabled,
+            'description': self.description,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
-            'last_used': self.last_used.isoformat() if self.last_used else None,
-            'usage_count': self.usage_count,
-            'expires_at': self.expires_at.isoformat() if self.expires_at else None
+            'last_used': self.last_used.isoformat() if self.last_used else None
+        }
+
+class PlaybookFile(db.Model):
+    __tablename__ = 'playbook_files'
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
+    filename = db.Column(db.String(255), nullable=False)  # Original filename
+    stored_filename = db.Column(db.String(255), nullable=False)  # Unique filename on disk
+    file_path = db.Column(db.String(500), nullable=False)  # Full path to file
+    file_size = db.Column(db.Integer, nullable=False)  # File size in bytes
+    mime_type = db.Column(db.String(100))  # MIME type of the file
+    description = db.Column(db.Text)  # Optional description
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    playbook = db.relationship('Playbook', backref='files')
+    
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'playbook_id': str(self.playbook_id),
+            'filename': self.filename,
+            'stored_filename': self.stored_filename,
+            'file_path': self.file_path,
+            'file_size': self.file_size,
+            'mime_type': self.mime_type,
+            'description': self.description,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
         } 

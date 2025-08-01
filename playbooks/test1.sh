@@ -1,0 +1,1 @@
+echo hiiiii >> /tmp/ls
