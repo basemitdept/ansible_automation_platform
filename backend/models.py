@@ -86,7 +86,7 @@ class Task(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
-    host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=False)
+    host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=True)
     status = db.Column(db.String(50), default='pending')
     started_at = db.Column(db.DateTime)
     finished_at = db.Column(db.DateTime)
@@ -244,7 +244,7 @@ class ExecutionHistory(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
-    host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=False)
+    host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=True)
     status = db.Column(db.String(50), nullable=False)
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     finished_at = db.Column(db.DateTime)
@@ -276,7 +276,7 @@ class ExecutionHistory(db.Model):
         return {
             'id': str(self.id),
             'playbook_id': str(self.playbook_id),
-            'host_id': str(self.host_id),
+            'host_id': str(self.host_id) if self.host_id else None,
             'status': self.status,
             'started_at': self.started_at.isoformat(),
             'finished_at': self.finished_at.isoformat() if self.finished_at else None,

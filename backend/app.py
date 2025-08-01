@@ -378,7 +378,14 @@ def delete_task(task_id):
 # Artifacts routes
 @app.route('/api/artifacts/<execution_id>', methods=['GET'])
 def get_artifacts(execution_id):
+    print(f"API: Fetching artifacts for execution_id: {execution_id}")
     artifacts = Artifact.query.filter_by(execution_id=execution_id).order_by(Artifact.created_at.desc()).all()
+    print(f"API: Found {len(artifacts)} artifacts for execution {execution_id}")
+    
+    # Debug: Print artifact details
+    for i, artifact in enumerate(artifacts):
+        print(f"API Artifact {i+1}: {artifact.task_name} - {artifact.host_name} - {artifact.register_name}")
+    
     return jsonify([a.to_dict() for a in artifacts])
 
 @app.route('/api/artifacts/<artifact_id>/data', methods=['GET'])
@@ -522,8 +529,8 @@ def execute_playbook():
         host_ids = [host_id]
     elif not host_ids:
         # Allow empty host_ids if using dynamic targets via variables
-        if not variables or 'ips' not in variables:
-            return jsonify({'error': 'No hosts specified and no dynamic targets (ips variable) provided'}), 400
+        if not variables or ('ips' not in variables and 'hosts' not in variables):
+            return jsonify({'error': 'No hosts specified and no dynamic targets (ips or hosts variable) provided'}), 400
         host_ids = []  # Empty host list for dynamic targets
     
     # Get all selected hosts
@@ -549,7 +556,7 @@ def execute_playbook():
     else:
         # Dynamic targets from variables
         host_list_json = json.dumps([])
-        dynamic_targets = variables.get('ips', 'dynamic targets') if variables else 'dynamic targets'
+        dynamic_targets = variables.get('ips') or variables.get('hosts', 'dynamic targets') if variables else 'dynamic targets'
         target_info = f"Dynamic execution targeting: {dynamic_targets}"
         
         task = Task(
@@ -939,11 +946,12 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 else:
                     inv_content += f"{host.hostname}\n"
             
-            # Add dynamic IPs from variables if 'ips' variable is provided
+            # Add dynamic IPs from variables if 'ips' or 'hosts' variable is provided
             dynamic_ips = set()
-            if variables and 'ips' in variables:
-                ips_value = variables['ips']
-                if isinstance(ips_value, str):
+            if variables:
+                # Check for 'ips' variable first, then 'hosts' variable
+                ips_value = variables.get('ips') or variables.get('hosts')
+                if ips_value and isinstance(ips_value, str):
                     # Split comma-separated IPs and add them to inventory
                     for ip in ips_value.split(','):
                         ip = ip.strip()
@@ -1293,17 +1301,63 @@ def extract_artifacts_from_tree(artifacts_dir, execution_id, hosts):
 def extract_register_from_output(output_lines, execution_id, hosts):
     """
     Extract register variables and their stdout from Ansible verbose output.
-    Discovers actual register variables from playbook tasks.
+    Improved version with better pattern matching and error handling.
     """
     artifacts = []
     print(f"Starting artifact extraction for {len(hosts)} hosts")
     print(f"Total output lines to process: {len(output_lines)}")
     
+    if not hosts:
+        print("⚠️  No hosts provided for extraction")
+        return artifacts
+    
+    # Debug: Print first 10 lines to understand the format
+    print("📝 First 10 lines of output:")
+    for i, line in enumerate(output_lines[:10]):
+        print(f"  {i+1}: {line}")
+    
+    # Create hostname list for easier matching
+    hostnames = [h.hostname for h in hosts]
+    print(f"🔍 Looking for these hostnames: {hostnames}")
+    
+    # Find lines containing hostnames for debugging
+    hostname_lines = []
+    for i, line in enumerate(output_lines):
+        for hostname in hostnames:
+            if hostname in line and any(pattern in line for pattern in ['ok:', 'changed:', 'failed:', 'fatal:', 'unreachable:', 'skipped:']):
+                hostname_lines.append(f"Line {i+1}: {line}")
+                if len(hostname_lines) >= 5:
+                    break
+        if len(hostname_lines) >= 5:
+            break
+    
+    if hostname_lines:
+        print("📍 Lines containing hostname results:")
+        for line in hostname_lines:
+            print(f"  {line}")
+    else:
+        print("⚠️  No lines found with hostname results - trying alternative patterns")
+        # Try to find any result lines
+        result_lines = []
+        for i, line in enumerate(output_lines):
+            if any(pattern in line for pattern in ['ok:', 'changed:', 'failed:', 'TASK [']):
+                result_lines.append(f"Line {i+1}: {line}")
+                if len(result_lines) >= 5:
+                    break
+        if result_lines:
+            print("📍 Found these result patterns:")
+            for line in result_lines:
+                print(f"  {line}")
+    
     current_task = None
     current_host = None
-    current_task_status = None  # Track the status of the current task being processed
+    current_task_status = None
     in_json_block = False
     json_lines = []
+    
+    # More flexible pattern matching
+    task_counter = 0
+    artifact_counter = 0
     
     for i, line in enumerate(output_lines):
         try:
@@ -1311,60 +1365,84 @@ def extract_register_from_output(output_lines, execution_id, hosts):
             if i % 50 == 0:
                 print(f"Processing line {i}: {line[:100]}...")
             
-            # Detect task names
-            if "TASK [" in line and "] **" in line:
-                current_task = line.split("TASK [")[1].split("]")[0].strip()
-                print(f"Found task: {current_task}")
-                current_task_status = None  # Reset status for new task
-                in_json_block = False
-                json_lines = []
+            # Detect task names with more flexible pattern
+            if "TASK [" in line and ("] **" in line or "] *" in line):
+                task_match = line.find("TASK [")
+                if task_match != -1:
+                    task_start = task_match + 6  # Length of "TASK ["
+                    task_end = line.find("]", task_start)
+                    if task_end != -1:
+                        current_task = line[task_start:task_end].strip()
+                        task_counter += 1
+                        print(f"📋 Found task {task_counter}: {current_task}")
+                        current_task_status = None  # Reset status for new task
+                        in_json_block = False
+                        json_lines = []
             
-            # Look for host task results
+            # Look for host task results with more flexible hostname matching
             for host in hosts:
                 hostname = host.hostname
                 
-                # Detect when a task completes on a host with output (including failed tasks)
+                # More flexible pattern matching for different hostname formats
+                patterns_to_check = [
+                    f"ok: [{hostname}]",
+                    f"changed: [{hostname}]", 
+                    f"failed: [{hostname}]",
+                    f"fatal: [{hostname}]",
+                    f"unreachable: [{hostname}]",
+                    f"skipped: [{hostname}]",
+                    # Also try without brackets for some Ansible versions
+                    f"ok: {hostname}",
+                    f"changed: {hostname}",
+                    f"failed: {hostname}"
+                ]
+                
                 task_status = None
-                if f"ok: [{hostname}]" in line:
-                    task_status = "ok"
-                elif f"changed: [{hostname}]" in line:
-                    task_status = "changed"
-                elif f"failed: [{hostname}]" in line:
-                    task_status = "failed"
-                elif f"fatal: [{hostname}]" in line:
-                    task_status = "fatal"
-                elif f"unreachable: [{hostname}]" in line:
-                    task_status = "unreachable"
-                elif f"skipped: [{hostname}]" in line:
-                    task_status = "skipped"
+                for pattern in patterns_to_check:
+                    if pattern in line:
+                        if "ok:" in pattern:
+                            task_status = "ok"
+                        elif "changed:" in pattern:
+                            task_status = "changed"
+                        elif "failed:" in pattern:
+                            task_status = "failed"
+                        elif "fatal:" in pattern:
+                            task_status = "fatal"
+                        elif "unreachable:" in pattern:
+                            task_status = "unreachable"
+                        elif "skipped:" in pattern:
+                            task_status = "skipped"
+                        break
                 
                 if task_status:
                     current_host = hostname
-                    current_task_status = task_status  # Store the status for multi-line JSON processing
-                    print(f"Found {task_status} result for {hostname}: {line[:100]}...")
+                    current_task_status = task_status
+                    artifact_counter += 1
+                    print(f"🎯 Found {task_status} result for {hostname} in task '{current_task}': {line[:100]}...")
                     
-                    # Check if this line has JSON output
-                    if "=> {" in line:
-                        print(f"Found JSON output for {hostname} in task {current_task} (status: {task_status})")
-                        # Start collecting JSON
-                        json_start = line.find("=> {") + 3
-                        json_content = line[json_start:]
-                        json_lines = [json_content]
-                        in_json_block = True
+                    # Always create an artifact when we find a task result, regardless of format
+                    if current_task:
+                        # Check if this line has JSON output
+                        if "=> {" in line:
+                            print(f"📊 Has JSON output - processing...")
+                            # Start collecting JSON
+                            json_start = line.find("=> {") + 3
+                            json_content = line[json_start:]
+                            json_lines = [json_content]
+                            in_json_block = True
+                            
+                            # Check if JSON is complete on this line
+                            if json_content.count("{") <= json_content.count("}"):
+                                in_json_block = False
+                                process_json_output(json_lines, current_task, hostname, artifacts, execution_id, task_status)
+                                json_lines = []
                         
-                        # Check if JSON is complete on this line
-                        if json_content.count("{") <= json_content.count("}"):
-                            in_json_block = False
-                            process_json_output(json_lines, current_task, hostname, artifacts, execution_id, task_status)
-                            json_lines = []
-                    
-                    # Also check for simple output without JSON
-                    elif "=>" in line and not "=> {" in line:
-                        print(f"Found simple output for {hostname} (status: {task_status}): {line}")
-                        # Extract simple output
-                        output_start = line.find("=>") + 2
-                        simple_output = line[output_start:].strip()
-                        if simple_output and current_task:
+                        # Check for simple output without JSON
+                        elif "=>" in line and not "=> {" in line:
+                            print(f"📝 Has simple output - creating artifact...")
+                            # Extract simple output
+                            output_start = line.find("=>") + 2
+                            simple_output = line[output_start:].strip()
                             register_name = determine_register_name(current_task, {})
                             artifact = Artifact(
                                 execution_id=execution_id,
@@ -1374,13 +1452,35 @@ def extract_register_from_output(output_lines, execution_id, hosts):
                                     "stdout": simple_output,
                                     "task": current_task,
                                     "host": hostname,
-                                    "status": task_status
+                                    "status": task_status,
+                                    "raw_output": simple_output
                                 }, indent=2),
                                 host_name=hostname,
                                 task_status=task_status
                             )
                             artifacts.append(artifact)
-                            print(f"Created simple artifact: {register_name} for {hostname} (status: {task_status})")
+                            print(f"✅ Created simple artifact #{artifact_counter}: {register_name} for {hostname}")
+                        
+                        # Even if no output, create a status artifact for tasks that ran
+                        else:
+                            print(f"📋 No output but task completed - creating status artifact...")
+                            register_name = determine_register_name(current_task, {})
+                            artifact = Artifact(
+                                execution_id=execution_id,
+                                task_name=current_task,
+                                register_name=register_name,
+                                register_data=json.dumps({
+                                    "task": current_task,
+                                    "host": hostname,
+                                    "status": task_status,
+                                    "message": f"Task completed with status: {task_status}",
+                                    "raw_line": line.strip()
+                                }, indent=2),
+                                host_name=hostname,
+                                task_status=task_status
+                            )
+                            artifacts.append(artifact)
+                            print(f"✅ Created status artifact #{artifact_counter}: {register_name} for {hostname}")
                     
                 elif in_json_block and current_host == hostname:
                     # Continue collecting multi-line JSON
@@ -1399,6 +1499,15 @@ def extract_register_from_output(output_lines, execution_id, hosts):
             print(f"Error processing line {i}: {e}")
     
     print(f"Total artifacts extracted: {len(artifacts)}")
+    
+    # If no artifacts were extracted, provide detailed debugging info
+    if len(artifacts) == 0:
+        print("⚠️  No artifacts extracted - this means:")
+        print("   1. No register variables were found in the playbook output")
+        print("   2. The playbook might not have 'register:' statements")
+        print("   3. The output format might not match expected patterns")
+        print("   4. Check that playbooks contain tasks with 'register: variable_name'")
+    
     return artifacts
 
 def process_json_output(json_lines, task_name, hostname, artifacts, execution_id, task_status="ok"):
@@ -1741,11 +1850,12 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 else:
                     inv_content += f"{host.hostname}\n"
             
-            # Add dynamic IPs from variables if 'ips' variable is provided
+            # Add dynamic IPs from variables if 'ips' or 'hosts' variable is provided
             dynamic_ips = set()
-            if variables and 'ips' in variables:
-                ips_value = variables['ips']
-                if isinstance(ips_value, str):
+            if variables:
+                # Check for 'ips' variable first, then 'hosts' variable
+                ips_value = variables.get('ips') or variables.get('hosts')
+                if ips_value and isinstance(ips_value, str):
                     # Split comma-separated IPs and add them to inventory
                     for ip in ips_value.split(','):
                         ip = ip.strip()
@@ -2047,9 +2157,17 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
             try:
                 import json
                 # Re-query hosts to ensure they're bound to the current session
-                host_ids = [host.id for host in hosts]
-                fresh_hosts = Host.query.filter(Host.id.in_(host_ids)).all()
-                host_list_json = json.dumps([host.to_dict() for host in fresh_hosts])
+                if hosts:
+                    host_ids = [host.id for host in hosts]
+                    fresh_hosts = Host.query.filter(Host.id.in_(host_ids)).all()
+                    host_list_json = json.dumps([host.to_dict() for host in fresh_hosts])
+                    primary_host_id = fresh_hosts[0].id if fresh_hosts else None
+                else:
+                    # For dynamic execution without specific hosts
+                    host_ids = []
+                    fresh_hosts = []
+                    host_list_json = json.dumps([])
+                    primary_host_id = None
                 
                 print(f"Creating execution history for task {task_id}")
                 print(f"Playbook ID: {playbook.id}, Host IDs: {host_ids}")
@@ -2057,7 +2175,7 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 
                 history = ExecutionHistory(
                     playbook_id=playbook.id,
-                    host_id=fresh_hosts[0].id,  # Use primary host for record
+                    host_id=primary_host_id,  # Use primary host for record (can be None for dynamic executions)
                     status=overall_status,
                     started_at=task_started_at,
                     finished_at=task_finished_at,
@@ -2073,22 +2191,100 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 
                 # Extract and save artifacts from output
                 try:
-                    print(f"Extracting artifacts from output for execution {history.id}")
-                    print(f"Total output lines: {len(output_lines)}")
+                    print(f"🔍 ARTIFACT EXTRACTION START for execution {history.id}")
+                    print(f"📊 Total output lines: {len(output_lines)}")
+                    print(f"🖥️  Available hosts: {len(fresh_hosts)}")
+                    print(f"📝 Variables: {variables}")
                     
-                    # Debug: Print some sample lines
+                    # CRITICAL DEBUG: Print actual output to understand format
+                    print("📋 FIRST 20 LINES OF ACTUAL OUTPUT:")
                     for i, line in enumerate(output_lines[:20]):
-                        if any(host.hostname in line for host in fresh_hosts):
-                            print(f"Debug line {i}: {line[:100]}...")
+                        print(f"   {i+1:2d}: {line}")
                     
-                    output_artifacts = extract_register_from_output(output_lines, history.id, fresh_hosts)
+                    # For dynamic executions, create pseudo-host objects for the dynamic IPs
+                    extraction_hosts = fresh_hosts
+                    if not extraction_hosts and variables:
+                        # Create pseudo-host objects for dynamic IPs from 'ips' or 'hosts' variable
+                        dynamic_ips = []
+                        ips_value = variables.get('ips') or variables.get('hosts')
+                        if ips_value and isinstance(ips_value, str):
+                            for ip in ips_value.split(','):
+                                ip = ip.strip()
+                                if ip and ip not in ['all', 'targets']:
+                                    dynamic_ips.append(ip)
+                        
+                        # Create simple objects with hostname attribute for artifact extraction
+                        class PseudoHost:
+                            def __init__(self, hostname):
+                                self.hostname = hostname
+                                self.name = hostname
+                        
+                        extraction_hosts = [PseudoHost(ip) for ip in dynamic_ips]
+                        variable_name = 'ips' if 'ips' in variables else 'hosts'
+                        print(f"🔧 Created {len(extraction_hosts)} pseudo-hosts from '{variable_name}' variable: {dynamic_ips}")
+                    
+                    if not extraction_hosts:
+                        print("❌ CRITICAL: No extraction hosts available!")
+                        print("   This means artifact extraction will fail!")
+                        print("   Fresh hosts:", [h.hostname if hasattr(h, 'hostname') else str(h) for h in fresh_hosts])
+                        print("   Variables:", variables)
+                    else:
+                        print(f"✅ Using {len(extraction_hosts)} hosts for extraction:")
+                        for host in extraction_hosts:
+                            print(f"   - {host.hostname}")
+                    
+                    # Debug: Look for hostname matches in output
+                    if extraction_hosts:
+                        hostname_matches = 0
+                        for i, line in enumerate(output_lines):
+                            for host in extraction_hosts:
+                                if host.hostname in line:
+                                    hostname_matches += 1
+                                    if hostname_matches <= 5:  # Show first 5 matches
+                                        print(f"🎯 Match {hostname_matches} line {i+1}: {line}")
+                        
+                        print(f"📊 Found {hostname_matches} lines containing hostnames")
+                        
+                        if hostname_matches == 0:
+                            print("⚠️  NO HOSTNAME MATCHES FOUND!")
+                            print("   This explains why no artifacts are created.")
+                            print("   Expected hostnames:", [h.hostname for h in extraction_hosts])
+                    
+                    print(f"🏃 Starting artifact extraction...")
+                    output_artifacts = extract_register_from_output(output_lines, history.id, extraction_hosts)
+                    print(f"🎯 ARTIFACT EXTRACTION COMPLETED: Found {len(output_artifacts)} artifacts")
+                    
+                    # Debug: Print details of extracted artifacts
+                    if output_artifacts:
+                        print("📦 EXTRACTED ARTIFACTS:")
+                        for i, artifact in enumerate(output_artifacts):
+                            print(f"   {i+1}. Task: '{artifact.task_name}'")
+                            print(f"      Host: '{artifact.host_name}'")
+                            print(f"      Register: '{artifact.register_name}'")
+                            print(f"      Status: '{artifact.task_status}'")
+                            print(f"      Data preview: {artifact.register_data[:100]}...")
+                    else:
+                        print("❌ NO ARTIFACTS EXTRACTED!")
+                        print("   This is the root cause of missing artifacts.")
                     
                     # Save all artifacts
-                    for artifact in output_artifacts:
-                        db.session.add(artifact)
-                    
-                    db.session.commit()
-                    print(f"Saved {len(output_artifacts)} artifacts for execution {history.id}")
+                    if output_artifacts:
+                        print(f"💾 Saving {len(output_artifacts)} artifacts to database...")
+                        for artifact in output_artifacts:
+                            db.session.add(artifact)
+                        
+                        db.session.commit()
+                        print(f"✅ Successfully saved {len(output_artifacts)} artifacts for execution {history.id}")
+                        
+                        # Verify artifacts were saved
+                        saved_artifacts = Artifact.query.filter_by(execution_id=history.id).all()
+                        print(f"🔍 Verification: Found {len(saved_artifacts)} artifacts in database for execution {history.id}")
+                        
+                        if len(saved_artifacts) != len(output_artifacts):
+                            print(f"⚠️  MISMATCH: Created {len(output_artifacts)} but saved {len(saved_artifacts)}")
+                    else:
+                        print(f"❌ No artifacts extracted for execution {history.id} - nothing to save")
+                        print("   This is why artifacts are missing in the UI!")
                     
                     # Clean up artifacts directory
                     import shutil
@@ -2191,6 +2387,38 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 task.error_output = str(e)
                 task.finished_at = datetime.utcnow()
                 db.session.commit()
+                
+                # Create execution history for the failed execution
+                try:
+                    if hosts:
+                        # For multi-host execution
+                        fresh_hosts = Host.query.filter(Host.id.in_([host.id for host in hosts])).all()
+                        host_list_json = json.dumps([host.to_dict() for host in fresh_hosts])
+                        primary_host_id = fresh_hosts[0].id if fresh_hosts else None
+                    else:
+                        # For dynamic execution
+                        host_list_json = json.dumps([])
+                        primary_host_id = None
+                    
+                    history = ExecutionHistory(
+                        playbook_id=playbook.id,
+                        host_id=primary_host_id,
+                        status='failed',
+                        started_at=task.started_at or datetime.utcnow(),
+                        finished_at=task.finished_at,
+                        output=task.output or '',
+                        error_output=str(e),
+                        username=username,
+                        host_list=host_list_json
+                    )
+                    
+                    db.session.add(history)
+                    db.session.commit()
+                    print(f"Created execution history for failed execution: {history.id}")
+                    
+                except Exception as history_error:
+                    print(f"Error creating execution history for failed execution: {history_error}")
+                    db.session.rollback()
         
         socketio.emit('task_update', {
             'task_id': str(task_id),

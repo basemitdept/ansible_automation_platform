@@ -32,10 +32,12 @@ import {
   DeleteOutlined,
   DatabaseOutlined,
   ReloadOutlined,
-  PauseCircleOutlined
+  PauseCircleOutlined,
+  RedoOutlined
 } from '@ant-design/icons';
-import { historyAPI, artifactsAPI } from '../services/api';
+import { historyAPI, artifactsAPI, tasksAPI, credentialsAPI } from '../services/api';
 import moment from 'moment';
+import { useNavigate } from 'react-router-dom';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -53,6 +55,14 @@ const History = () => {
   const [lastRefresh, setLastRefresh] = useState(null);
   const intervalRef = useRef(null);
   const isPageVisible = useRef(true);
+  
+  // Rerun functionality state
+  const [rerunModalVisible, setRerunModalVisible] = useState(false);
+  const [selectedRerunExecution, setSelectedRerunExecution] = useState(null);
+  const [credentials, setCredentials] = useState([]);
+  const [selectedCredential, setSelectedCredential] = useState(null);
+  const [rerunning, setRerunning] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchHistory();
@@ -174,6 +184,82 @@ const History = () => {
       message.error('Failed to delete execution history');
       console.error('Delete error:', error);
     }
+  };
+
+  const handleRerun = async (execution) => {
+    setSelectedRerunExecution(execution);
+    
+    // Fetch credentials for authentication options
+    try {
+      const response = await credentialsAPI.getAll();
+      setCredentials(response.data);
+    } catch (error) {
+      console.error('Failed to fetch credentials');
+      setCredentials([]);
+    }
+    
+    setRerunModalVisible(true);
+  };
+
+  const executeRerun = async (authData) => {
+    if (!selectedRerunExecution) return;
+    
+    setRerunning(true);
+    try {
+      // Get host IDs from the execution history
+      const hostIds = selectedRerunExecution.hosts ? 
+        selectedRerunExecution.hosts.map(host => host.id) : 
+        (selectedRerunExecution.host ? [selectedRerunExecution.host.id] : []);
+      
+      const executeData = {
+        playbook_id: selectedRerunExecution.playbook_id,
+        host_ids: hostIds,
+        ...authData
+      };
+
+      const response = await tasksAPI.execute(executeData);
+      
+      const hostCount = hostIds.length;
+      const targetInfo = hostCount > 0 ? `${hostCount} host(s)` : 'dynamic targets';
+      message.success(`Playbook rerun started on ${targetInfo}`);
+      
+      setRerunModalVisible(false);
+      
+      // Navigate to the task detail page
+      if (response.data.task && response.data.task.id) {
+        navigate(`/tasks/${response.data.task.id}`);
+      }
+      
+    } catch (error) {
+      message.error('Failed to rerun playbook');
+      console.error('Rerun error:', error);
+    } finally {
+      setRerunning(false);
+    }
+  };
+
+  const handleRerunWithCredential = async () => {
+    if (!selectedCredential) {
+      message.warning('Please select a credential');
+      return;
+    }
+
+    try {
+      const credResponse = await credentialsAPI.getPassword(selectedCredential);
+      const credential = credentials.find(c => c.id === selectedCredential);
+      
+      await executeRerun({
+        username: credential.username,
+        password: credResponse.data.password
+      });
+    } catch (error) {
+      message.error('Failed to get credential password');
+      console.error('Credential error:', error);
+    }
+  };
+
+  const handleRerunWithoutCredentials = async () => {
+    await executeRerun({});
   };
 
   const parseExecutionSummary = (output) => {
@@ -367,6 +453,14 @@ const History = () => {
         <Space>
           <Button
             type="text"
+            icon={<RedoOutlined />}
+            onClick={() => handleRerun(record)}
+            title="Rerun this task"
+          >
+            Rerun
+          </Button>
+          <Button
+            type="text"
             icon={<EyeOutlined />}
             onClick={() => showOutput(record)}
             title="View Output"
@@ -390,7 +484,7 @@ const History = () => {
           </Popconfirm>
         </Space>
       ),
-      width: 150,
+      width: 200,
     },
   ];
 
@@ -779,6 +873,101 @@ const History = () => {
                 )}
               </TabPane>
             </Tabs>
+          </div>
+        )}
+      </Modal>
+
+      {/* Rerun Modal */}
+      <Modal
+        title={
+          <Space>
+            <RedoOutlined />
+            Rerun Playbook - {selectedRerunExecution?.playbook?.name}
+          </Space>
+        }
+        open={rerunModalVisible}
+        onCancel={() => setRerunModalVisible(false)}
+        width={500}
+        footer={null}
+      >
+        {selectedRerunExecution && (
+          <div>
+            <div style={{ marginBottom: 16 }}>
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <div>
+                  <Text strong>Playbook:</Text> {selectedRerunExecution.playbook?.name}
+                </div>
+                <div>
+                  <Text strong>Hosts:</Text> {
+                    selectedRerunExecution.hosts?.length > 0 
+                      ? `${selectedRerunExecution.hosts.length} host(s): ${selectedRerunExecution.hosts.map(h => h.name).join(', ')}`
+                      : selectedRerunExecution.host?.name || 'Dynamic targets'
+                  }
+                </div>
+                <div>
+                  <Text strong>Original User:</Text> {selectedRerunExecution.username || 'Unknown'}
+                </div>
+              </Space>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>Choose authentication method:</Text>
+            </div>
+
+            <Space direction="vertical" style={{ width: '100%' }}>
+              {credentials.length > 0 && (
+                <Card size="small" title="Use Saved Credentials">
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <div>
+                      <Text>Select a credential:</Text>
+                      <div style={{ marginTop: 8 }}>
+                        {credentials.map(cred => (
+                          <div key={cred.id} style={{ marginBottom: 8 }}>
+                            <label style={{ display: 'flex', alignItems: 'center' }}>
+                              <input
+                                type="radio"
+                                name="credential"
+                                value={cred.id}
+                                checked={selectedCredential === cred.id}
+                                onChange={() => setSelectedCredential(cred.id)}
+                                style={{ marginRight: 8 }}
+                              />
+                              <span>
+                                <strong>{cred.name}</strong> ({cred.username})
+                                {cred.description && <span style={{ color: '#666' }}> - {cred.description}</span>}
+                              </span>
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <Button 
+                      type="primary" 
+                      onClick={handleRerunWithCredential}
+                      loading={rerunning}
+                      disabled={!selectedCredential}
+                    >
+                      Rerun with Selected Credential
+                    </Button>
+                  </Space>
+                </Card>
+              )}
+
+              <Card size="small" title="Use SSH Keys">
+                <Space direction="vertical">
+                  <Text type="secondary">
+                    Use SSH key-based authentication (no password required)
+                  </Text>
+                  <Button 
+                    type="default" 
+                    onClick={handleRerunWithoutCredentials}
+                    loading={rerunning}
+                  >
+                    Rerun with SSH Keys
+                  </Button>
+                </Space>
+              </Card>
+            </Space>
           </div>
         )}
       </Modal>
