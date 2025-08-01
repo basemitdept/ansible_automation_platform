@@ -44,6 +44,8 @@ const TaskDetail = () => {
   const countdownIntervalRef = useRef(null);
 
   useEffect(() => {
+    console.log('🔴 TASKDETAIL: useEffect triggered for task:', taskId);
+    
     fetchTask();
     
     // Connect to WebSocket for real-time updates
@@ -81,70 +83,85 @@ const TaskDetail = () => {
     };
 
     const handleTaskOutput = (data) => {
-      if (data.task_id === taskId && data.output && data.output.trim()) {
-        setOutput(prevOutput => {
-          // Avoid duplicate lines
-          const newLine = data.output.trim();
-          if (prevOutput.length > 0 && prevOutput[prevOutput.length - 1] === newLine) {
-            return prevOutput;
-          }
-          return [...prevOutput, newLine];
-        });
-        // Auto-scroll to bottom with requestAnimationFrame for better performance
-        requestAnimationFrame(() => {
-          if (outputRef.current) {
-            outputRef.current.scrollTop = outputRef.current.scrollHeight;
-          }
-        });
-      }
+      console.log('🔴 FRONTEND: Received task_output:', data);
+      console.log('🔴 FRONTEND: Current taskId:', taskId);
+      console.log('🔴 FRONTEND: Message task_id:', data.task_id);
+      console.log('🔴 FRONTEND: IDs match:', data.task_id === taskId);
+      
+      // Show ALL messages regardless of task ID + show empty lines too
+      const displayText = (data.output !== undefined) ? (data.output.trim() || '[EMPTY]') : '[UNDEFINED]';
+      console.log('🔴 FRONTEND DEBUG: Adding ANY task output:', displayText);
+      console.log('🔴 FRONTEND DEBUG: Current output length before add:', output.length);
+      
+      setOutput(prevOutput => {
+        const newOutput = [...prevOutput, `[${data.task_id.substr(0,8)}] ${displayText}`];
+        console.log('🔴 FRONTEND DEBUG: New output length after add:', newOutput.length);
+        // Keep only last 200 lines to prevent memory issues
+        return newOutput.slice(-200);
+      });
+        
+      // Force scroll to bottom
+      setTimeout(() => {
+        if (outputRef.current) {
+          outputRef.current.scrollTop = outputRef.current.scrollHeight;
+        }
+      }, 10);
     };
 
+    console.log('🔴 FRONTEND: Setting up WebSocket listeners for task:', taskId);
+    console.log('🔴 FRONTEND: socketService object:', socketService);
+    console.log('🔴 FRONTEND: socketService.on function:', socketService.on);
+    
     socketService.on('task_update', handleTaskUpdate);
     socketService.on('task_output', handleTaskOutput);
+    
+    console.log('🔴 FRONTEND: WebSocket listeners setup complete');
+    console.log('🔴 FRONTEND: Registered listeners:', socketService.listeners);
+    
+    // Test if listeners are working by manually emitting a test
+    setTimeout(() => {
+      console.log('🔴 FRONTEND: Testing listener setup...');
+      if (socketService.listeners && socketService.listeners.has('task_output')) {
+        console.log('🔴 FRONTEND: task_output listeners count:', socketService.listeners.get('task_output').length);
+      }
+    }, 1000);
 
-    // Aggressive polling for task completion - check every 500ms
-    const completionCheckInterval = setInterval(async () => {
+    // DISABLED: Aggressive polling was clearing live output too quickly
+    // Let WebSocket handle status updates instead
+    console.log('🔴 TASKDETAIL: Aggressive polling DISABLED to allow live output viewing');
+    const completionCheckInterval = null;
+    
+    // Slower polling for task completion - check every 10 seconds only
+    const slowCompletionCheckInterval = setInterval(async () => {
       if (!redirecting) {
         try {
-          console.log('TaskDetail: Aggressive polling check...');
+          console.log('TaskDetail: Slow polling check...');
           const response = await tasksAPI.getById(taskId);
           const currentStatus = response.data.status;
           
           console.log('TaskDetail: Polled status:', currentStatus, 'Current task status:', task?.status);
           
-          // Update task state
-          setTask(prevTask => {
-            if (prevTask && prevTask.status !== currentStatus) {
-              console.log('TaskDetail: Status changed from', prevTask.status, 'to', currentStatus);
-              
-              // If task completed, trigger redirect immediately
-              if (currentStatus === 'completed' || currentStatus === 'failed' || currentStatus === 'partial') {
-                console.log('TaskDetail: Task completed! Triggering redirect in 100ms');
-                setTimeout(() => {
-                  if (!redirecting) {
-                    handleTaskCompletion(currentStatus);
-                  }
-                }, 100);
-              }
-            }
-            
-            return {
+          // Only redirect if task has been completed for a while (to allow viewing output)
+          if (currentStatus === 'completed' || currentStatus === 'failed' || currentStatus === 'partial') {
+            console.log('TaskDetail: Task completed! Will stay on page to show live output');
+            setTask(prevTask => ({
               ...prevTask,
               status: currentStatus,
               finished_at: response.data.finished_at,
               error_output: response.data.error_output
-            };
-          });
+            }));
+          }
         } catch (error) {
-          console.error('TaskDetail: Error in aggressive polling:', error);
+          console.error('TaskDetail: Error in slow polling:', error);
         }
       }
-    }, 500); // Check every 500ms
+    }, 10000); // Check every 10 seconds only
 
     return () => {
       socketService.off('task_update', handleTaskUpdate);
       socketService.off('task_output', handleTaskOutput);
-      clearInterval(completionCheckInterval);
+      if (completionCheckInterval) clearInterval(completionCheckInterval);
+      clearInterval(slowCompletionCheckInterval);
       clearInterval(wsCheckInterval);
       clearTimeout(redirectTimeoutRef.current);
       clearInterval(countdownIntervalRef.current);
@@ -157,10 +174,11 @@ const TaskDetail = () => {
       const response = await tasksAPI.getById(taskId);
       setTask(response.data);
       
-      // Only set initial output if we don't have any output yet (first load)
-      if (response.data.output && output.length === 0) {
-        setOutput(response.data.output.split('\n').filter(line => line.trim()));
-      }
+      // DISABLED: Don't load static output - use live WebSocket output only
+      console.log('🔴 TASKDETAIL: Skipping static output load, using live WebSocket only');
+      // if (response.data.output && output.length === 0) {
+      //   setOutput(response.data.output.split('\n').filter(line => line.trim()));
+      // }
       
       // Check if task is already completed on first load
       if (response.data.status === 'completed' || 

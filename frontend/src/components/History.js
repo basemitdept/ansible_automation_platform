@@ -734,7 +734,7 @@ const History = () => {
                 ) : (
                   <Collapse>
                     {artifacts.map((artifact) => (
-                      <Panel
+                      <Collapse.Panel
                         header={
                           <div>
                             <Tag color="blue">{artifact.host_name}</Tag>
@@ -767,43 +767,29 @@ const History = () => {
                           <code>{artifact.register_name}</code>
                         </div>
                         <div style={{ marginTop: 8 }}>
-                          <Text strong>STDOUT Output:</Text>
+                          <Text strong>Task Summary:</Text>
                           <pre
                             style={{
-                              backgroundColor: '#1f1f1f',
-                              color: '#fff',
-                              padding: '12px',
-                              borderRadius: '4px',
+                              backgroundColor: '#f6f8fa',
+                              color: '#24292e',
+                              padding: '16px',
+                              borderRadius: '6px',
                               marginTop: '8px',
-                              fontSize: '12px',
-                              maxHeight: '300px',
+                              fontSize: '13px',
+                              fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                              maxHeight: '400px',
                               overflow: 'auto',
-                              border: '1px solid #d9d9d9',
-                              whiteSpace: 'pre-wrap'
+                              border: '1px solid #e1e4e8',
+                              whiteSpace: 'pre-wrap',
+                              lineHeight: '1.45'
                             }}
                           >
-                            {(() => {
-                              try {
-                                const data = typeof artifact.register_data === 'string' 
-                                  ? JSON.parse(artifact.register_data) 
-                                  : artifact.register_data;
-                                
-                                // Display stdout content directly
-                                if (data && data.stdout) {
-                                  return data.stdout;
-                                }
-                                
-                                // Fallback to full data if no stdout field
-                                return typeof artifact.register_data === 'string' 
-                                  ? artifact.register_data 
-                                  : JSON.stringify(artifact.register_data, null, 2);
-                              } catch (e) {
-                                return artifact.register_data;
-                              }
-                            })()}
+                            {typeof artifact.register_data === 'string' 
+                              ? artifact.register_data 
+                              : JSON.stringify(artifact.register_data, null, 2)}
                           </pre>
                         </div>
-                      </Panel>
+                      </Collapse.Panel>
                     ))}
                   </Collapse>
                 )}
