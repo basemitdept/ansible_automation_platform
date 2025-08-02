@@ -133,10 +133,12 @@ class Task(db.Model):
     output = db.Column(db.Text)
     error_output = db.Column(db.Text)
     host_list = db.Column(db.Text)  # JSON string of all hosts in multi-host execution
+    webhook_id = db.Column(db.String(36), db.ForeignKey('webhooks.id'), nullable=True)  # Track webhook-triggered tasks
     
     playbook = db.relationship('Playbook', backref='tasks')
     host = db.relationship('Host', backref='tasks')
     user = db.relationship('User', backref='tasks')
+    webhook = db.relationship('Webhook', backref='tasks')
     
     def to_dict(self):
         import json
@@ -167,6 +169,8 @@ class Task(db.Model):
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'host': self.host.to_dict() if self.host else None,
             'user': self.user.to_dict() if self.user else None,
+            'webhook_id': str(self.webhook_id) if self.webhook_id else None,
+            'webhook': self.webhook.to_dict() if self.webhook else None,
             'hosts': hosts_data  # List of all hosts in multi-host execution
         }
 
@@ -351,6 +355,8 @@ class ApiToken(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_used = db.Column(db.DateTime)
+    usage_count = db.Column(db.Integer, default=0)
+    expires_at = db.Column(db.DateTime)
     
     def to_dict(self):
         return {
@@ -361,7 +367,9 @@ class ApiToken(db.Model):
             'description': self.description,
             'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z',
-            'last_used': self.last_used.isoformat() + 'Z' if self.last_used else None
+            'last_used': self.last_used.isoformat() + 'Z' if self.last_used else None,
+            'usage_count': self.usage_count,
+            'expires_at': self.expires_at.isoformat() + 'Z' if self.expires_at else None
         }
 
 class PlaybookFile(db.Model):

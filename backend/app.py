@@ -1259,13 +1259,15 @@ def trigger_webhook(webhook_token):
         host_id=primary_host.id,
         status='pending',
         host_list=host_list_json,
-        serial_id=get_next_serial_id()
+        serial_id=get_next_serial_id(),
+        webhook_id=webhook.id
     )
     db.session.add(task)
     db.session.commit()
     
     # Store IDs and data for thread execution to avoid session issues
     task_id = task.id
+    webhook_id = webhook.id  # Store webhook ID
     playbook_data = {
         'id': playbook.id,
         'name': playbook.name,
@@ -1281,7 +1283,7 @@ def trigger_webhook(webhook_token):
     try:
         thread = threading.Thread(
             target=run_webhook_playbook,
-            args=(task_id, playbook_data, host_objects, username, password, variables)
+            args=(task_id, playbook_data, host_objects, username, password, variables, webhook_id)
         )
         thread.daemon = True
         thread.start()
@@ -1297,7 +1299,7 @@ def trigger_webhook(webhook_token):
     except Exception as e:
         return jsonify({'error': f'Failed to trigger webhook: {str(e)}'}), 500
 
-def run_webhook_playbook(task_id, playbook_data, host_objects, username, password, variables=None):
+def run_webhook_playbook(task_id, playbook_data, host_objects, username, password, variables=None, webhook_id=None):
     """
     Execute playbook for webhook with proper session management.
     Uses IDs and dictionaries instead of ORM objects to avoid session issues.
@@ -1346,7 +1348,7 @@ def run_webhook_playbook(task_id, playbook_data, host_objects, username, passwor
     # Use the existing multi-host execution logic
     try:
         # Call the existing function but with our recreated objects
-        run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username, password, variables)
+        run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username, password, variables, webhook_id)
     except Exception as e:
         print(f"Webhook execution error: {str(e)}")
         with app.app_context():
@@ -1369,12 +1371,12 @@ def run_webhook_playbook(task_id, playbook_data, host_objects, username, passwor
                     error_output=str(e),
                     username='webhook',
                     host_list=task.host_list,
-                    webhook_id=None
+                    webhook_id=webhook_id
                 )
                 db.session.add(history)
                 db.session.commit()
 
-def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username, password, variables=None):
+def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username, password, variables=None, webhook_id=None):
     """
     Internal function that does the actual ansible execution.
     Separated to avoid session issues.
@@ -1554,7 +1556,7 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                     error_output=task.error_output,
                     username='webhook',  # Mark as webhook execution
                     host_list=task.host_list,
-                    webhook_id=None  # We don't have webhook_id in this context, but could be added
+                    webhook_id=webhook_id  # Now we have webhook_id from the parameter
                 )
                 db.session.add(history)
                 db.session.flush()  # Get the history ID

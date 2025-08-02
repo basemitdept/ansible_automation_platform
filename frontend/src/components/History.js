@@ -33,7 +33,8 @@ import {
   DatabaseOutlined,
   ReloadOutlined,
   PauseCircleOutlined,
-  RedoOutlined
+  RedoOutlined,
+  ApiOutlined
 } from '@ant-design/icons';
 import { historyAPI, artifactsAPI, tasksAPI, credentialsAPI } from '../services/api';
 import moment from 'moment';
@@ -419,14 +420,27 @@ const History = () => {
     },
     {
       title: 'User',
-      dataIndex: 'username',
-      key: 'username',
-      render: (username) => (
-        <Space>
-          <UserOutlined />
-          {username || 'Unknown'}
-        </Space>
-      ),
+      key: 'user',
+      render: (_, record) => {
+        // Show webhook name if task was triggered by webhook
+        if (record.webhook) {
+          return (
+            <Space>
+              <ApiOutlined />
+              <span style={{ color: '#1890ff' }}>
+                {record.webhook.name}
+              </span>
+            </Space>
+          );
+        }
+        // Show user if task was triggered by user
+        return (
+          <Space>
+            <UserOutlined />
+            {record.user?.username || 'Unknown'}
+          </Space>
+        );
+      },
       width: 120,
     },
     {
@@ -596,7 +610,19 @@ const History = () => {
                   <Text strong>Status:</Text> {getStatusTag(selectedExecution.status)}
                 </div>
                 <div>
-                  <Text strong>User:</Text> {selectedExecution.username || 'Unknown'}
+                  <Text strong>User:</Text> {
+                    selectedExecution.webhook ? (
+                      <span style={{ color: '#1890ff' }}>
+                        <ApiOutlined style={{ marginRight: 4 }} />
+                        {selectedExecution.webhook.name}
+                      </span>
+                    ) : (
+                      <span>
+                        <UserOutlined style={{ marginRight: 4 }} />
+                        {selectedExecution.user?.username || 'Unknown'}
+                      </span>
+                    )
+                  }
                 </div>
                 <div>
                   <Text strong>Started:</Text> {moment(selectedExecution.started_at).format('MMM DD, YYYY HH:mm:ss')}

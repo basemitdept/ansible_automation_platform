@@ -22,7 +22,9 @@ import {
   EyeOutlined,
   DeleteOutlined,
   ReloadOutlined,
-  PauseCircleOutlined
+  PauseCircleOutlined,
+  UserOutlined,
+  ApiOutlined
 } from '@ant-design/icons';
 import { tasksAPI } from '../services/api';
 import socketService from '../services/socket';
@@ -232,6 +234,31 @@ const Tasks = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status) => getStatusTag(status),
+      width: 120,
+    },
+    {
+      title: 'User',
+      key: 'user',
+      render: (_, record) => {
+        // Show webhook name if task was triggered by webhook
+        if (record.webhook) {
+          return (
+            <Space>
+              <ApiOutlined />
+              <span style={{ color: '#1890ff' }}>
+                {record.webhook.name}
+              </span>
+            </Space>
+          );
+        }
+        // Show user if task was triggered by user
+        return (
+          <Space>
+            <UserOutlined />
+            {record.user?.username || 'Unknown'}
+          </Space>
+        );
+      },
       width: 120,
     },
     {
