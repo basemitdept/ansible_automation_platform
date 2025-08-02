@@ -175,6 +175,17 @@ const Tasks = () => {
 
   const columns = [
     {
+      title: 'ID',
+      dataIndex: 'serial_id',
+      key: 'serial_id',
+      render: (serial_id) => (
+        <Tag color="blue" style={{ fontWeight: 'bold' }}>
+          #{serial_id || 'N/A'}
+        </Tag>
+      ),
+      width: 80,
+    },
+    {
       title: 'Playbook',
       dataIndex: ['playbook', 'name'],
       key: 'playbook',

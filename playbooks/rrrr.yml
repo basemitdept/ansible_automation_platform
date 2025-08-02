@@ -4,5 +4,5 @@
   become: yes
   tasks:
     - name: Update system packages
-      command: hostname
+      command: hostnam
       register: gg

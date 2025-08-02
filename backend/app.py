@@ -1,13 +1,14 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
+from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, verify_jwt_in_request
 from sqlalchemy import text
-from models import db, Playbook, Host, HostGroup, Task, ExecutionHistory, Artifact, Credential, Webhook, ApiToken, PlaybookFile
+from models import db, User, Playbook, Host, HostGroup, Task, ExecutionHistory, Artifact, Credential, Webhook, ApiToken, PlaybookFile
 import os
 import threading
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import time
 import secrets
@@ -15,13 +16,17 @@ import uuid
 from werkzeug.utils import secure_filename
 import mimetypes
 import shutil
+from functools import wraps
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'your-secret-key-here'
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'jwt-secret-string-change-this-in-production')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 
 db.init_app(app)
+jwt = JWTManager(app)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
 
@@ -67,6 +72,9 @@ def init_database():
                 # Create tables
                 db.create_all()
                 print("Database tables created successfully!")
+                
+                # Create default admin user if it doesn't exist
+                create_default_admin_user()
                 break
         except Exception as e:
             retry_count += 1
@@ -77,8 +85,252 @@ def init_database():
             print(f"Retrying in 3 seconds...")
             time.sleep(3)
 
+def create_default_admin_user():
+    """Create default admin user if it doesn't exist"""
+    try:
+        # Check if admin user already exists
+        admin_user = User.query.filter_by(username='admin').first()
+        if admin_user:
+            print("Default admin user already exists")
+            return
+            
+        # Create default admin user
+        admin_user = User(
+            username='admin',
+            role='admin'
+        )
+        admin_user.set_password('admin')
+        
+        db.session.add(admin_user)
+        db.session.commit()
+        print("✅ Default admin user created successfully (username: admin, password: admin)")
+        print("⚠️  Please change the default admin password after first login!")
+        
+    except Exception as e:
+        print(f"Failed to create default admin user: {str(e)}")
+        db.session.rollback()
+
 # Initialize database
 init_database()
+
+def get_next_serial_id():
+    """Get the next sequential ID for tasks"""
+    try:
+        # Get the maximum existing serial_id
+        max_serial = db.session.query(db.func.max(Task.serial_id)).scalar()
+        return (max_serial or 0) + 1
+    except Exception as e:
+        print(f"Error getting next serial ID: {e}")
+        # Fallback: count existing tasks + 1
+        task_count = Task.query.count()
+        return task_count + 1
+
+# Authentication middleware
+def require_permission(permission):
+    """Decorator to require specific permission for a route"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                verify_jwt_in_request()
+                current_user_id = get_jwt_identity()
+                user = User.query.get(current_user_id)
+                
+                if not user:
+                    return jsonify({'error': 'User not found'}), 401
+                
+                if not user.has_permission(permission):
+                    return jsonify({'error': 'Insufficient permissions'}), 403
+                    
+                return func(*args, **kwargs)
+            except Exception as e:
+                return jsonify({'error': 'Authentication required'}), 401
+        return wrapper
+    return decorator
+
+def get_current_user():
+    """Get current authenticated user"""
+    try:
+        verify_jwt_in_request()
+        current_user_id = get_jwt_identity()
+        return User.query.get(current_user_id)
+    except:
+        return None
+
+# Authentication routes
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """User login endpoint"""
+    data = request.get_json()
+    
+    if not data or not data.get('username') or not data.get('password'):
+        return jsonify({'error': 'Username and password required'}), 400
+    
+    user = User.query.filter_by(username=data['username']).first()
+    
+    if not user or not user.check_password(data['password']):
+        return jsonify({'error': 'Invalid username or password'}), 401
+    
+    # Create access token
+    access_token = create_access_token(identity=str(user.id))
+    
+    return jsonify({
+        'message': 'Login successful',
+        'access_token': access_token,
+        'user': user.to_dict()
+    }), 200
+
+@app.route('/api/auth/current-user', methods=['GET'])
+@jwt_required()
+def get_current_user_info():
+    """Get current user information"""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify({'user': user.to_dict()}), 200
+
+@app.route('/api/auth/logout', methods=['POST'])
+@jwt_required()
+def logout():
+    """User logout endpoint"""
+    # In a stateless JWT system, logout is handled client-side by removing the token
+    return jsonify({'message': 'Logout successful'}), 200
+
+# User management routes
+@app.route('/api/users', methods=['GET'])
+@require_permission('read')
+def get_users():
+    """Get all users (admin and editor only)"""
+    current_user = get_current_user()
+    if current_user and current_user.role in ['admin', 'editor']:
+        users = User.query.all()
+        return jsonify([user.to_dict() for user in users])
+    return jsonify({'error': 'Insufficient permissions'}), 403
+
+@app.route('/api/users', methods=['POST'])
+@require_permission('create_user')
+def create_user():
+    """Create new user (admin only)"""
+    current_user = get_current_user()
+    if not current_user or current_user.role != 'admin':
+        return jsonify({'error': 'Admin privileges required'}), 403
+    
+    data = request.get_json()
+    
+    if not data or not data.get('username') or not data.get('password'):
+        return jsonify({'error': 'Username and password required'}), 400
+    
+    # Check if username already exists
+    existing_user = User.query.filter_by(username=data['username']).first()
+    if existing_user:
+        return jsonify({'error': 'Username already exists'}), 400
+    
+    # Validate role
+    role = data.get('role', 'user')
+    if role not in ['admin', 'editor', 'user']:
+        return jsonify({'error': 'Invalid role'}), 400
+    
+    try:
+        user = User(
+            username=data['username'],
+            role=role
+        )
+        user.set_password(data['password'])
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'User created successfully',
+            'user': user.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/users/<user_id>', methods=['PUT'])
+@require_permission('edit_user')
+def update_user(user_id):
+    """Update user (admin only, or user updating their own password)"""
+    current_user = get_current_user()
+    if not current_user:
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    
+    # Users can only update their own password
+    if current_user.id != user.id and current_user.role != 'admin':
+        return jsonify({'error': 'Can only update your own account'}), 403
+    
+    try:
+        # Admin can update any field, users can only update their own password
+        if current_user.role == 'admin':
+            if 'username' in data:
+                # Check if new username is unique
+                existing_user = User.query.filter(User.username == data['username'], User.id != user.id).first()
+                if existing_user:
+                    return jsonify({'error': 'Username already exists'}), 400
+                user.username = data['username']
+            
+            if 'role' in data:
+                if data['role'] not in ['admin', 'editor', 'user']:
+                    return jsonify({'error': 'Invalid role'}), 400
+                user.role = data['role']
+        
+        # Both admin and user can update password
+        if 'password' in data:
+            user.set_password(data['password'])
+        
+        user.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'User updated successfully',
+            'user': user.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/users/<user_id>', methods=['DELETE'])
+@require_permission('delete_user')
+def delete_user(user_id):
+    """Delete user (admin only)"""
+    current_user = get_current_user()
+    if not current_user or current_user.role != 'admin':
+        return jsonify({'error': 'Admin privileges required'}), 403
+    
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Prevent deleting the last admin
+    if user.role == 'admin':
+        admin_count = User.query.filter_by(role='admin').count()
+        if admin_count <= 1:
+            return jsonify({'error': 'Cannot delete the last admin user'}), 400
+    
+    # Don't allow deleting yourself
+    if user.id == current_user.id:
+        return jsonify({'error': 'Cannot delete your own account'}), 400
+    
+    try:
+        db.session.delete(user)
+        db.session.commit()
+        return jsonify({'message': 'User deleted successfully'}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
 # Playbook routes
 @app.route('/api/playbooks', methods=['GET'])
@@ -677,7 +929,19 @@ def delete_history(history_id):
 
 # Execute playbook
 @app.route('/api/execute', methods=['POST'])
+@jwt_required()
 def execute_playbook():
+    # Get current user
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user:
+        return jsonify({'error': 'User not found'}), 401
+    
+    # Check if user has permission to execute playbooks
+    if not current_user.has_permission('execute'):
+        return jsonify({'error': 'Insufficient permissions to execute playbooks'}), 403
+    
     data = request.json
     playbook_id = data['playbook_id']
     host_ids = data.get('host_ids', [])  # Support multiple hosts
@@ -719,8 +983,10 @@ def execute_playbook():
         task = Task(
             playbook_id=playbook_id,
             host_id=primary_host.id,
+            user_id=current_user.id,
             status='pending',
-            host_list=host_list_json
+            host_list=host_list_json,
+            serial_id=get_next_serial_id()
         )
     else:
         # Dynamic targets from variables or playbook-defined targets
@@ -734,8 +1000,10 @@ def execute_playbook():
         task = Task(
             playbook_id=playbook_id,
             host_id=None,  # No specific host for dynamic execution
+            user_id=current_user.id,
             status='pending',
-            host_list=host_list_json
+            host_list=host_list_json,
+            serial_id=get_next_serial_id()
         )
     
     db.session.add(task)
@@ -747,9 +1015,8 @@ def execute_playbook():
     
     # Execute the playbook against all hosts in a single run
     try:
-        # Update task status to running and set actual start time
+        # Update task status to running (started_at will be set when execution actually starts)
         task.status = 'running'
-        task.started_at = datetime.utcnow()
         db.session.commit()
         
         # Emit initial task status update
@@ -991,7 +1258,8 @@ def trigger_webhook(webhook_token):
         playbook_id=playbook.id,
         host_id=primary_host.id,
         status='pending',
-        host_list=host_list_json
+        host_list=host_list_json,
+        serial_id=get_next_serial_id()
     )
     db.session.add(task)
     db.session.commit()
@@ -1090,8 +1358,10 @@ def run_webhook_playbook(task_id, playbook_data, host_objects, username, passwor
                 
                 # Create execution history entry for failed webhook execution
                 history = ExecutionHistory(
+                    serial_id=task.serial_id,  # Copy serial_id from task
                     playbook_id=playbook_data['id'],
                     host_id=task.host_id,
+                    user_id=task.user_id,  # Track user for webhook failures
                     status='failed',
                     started_at=task.started_at,
                     finished_at=task.finished_at,
@@ -1273,8 +1543,10 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 
                 # Create execution history entry for webhook execution
                 history = ExecutionHistory(
+                    serial_id=task.serial_id,  # Copy serial_id from task
                     playbook_id=playbook.id,
                     host_id=task.host_id,
+                    user_id=task.user_id,  # Track user even for webhook executions
                     status=final_status,
                     started_at=task.started_at,
                     finished_at=task.finished_at,
@@ -1348,8 +1620,10 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 
                 # Create execution history entry for failed webhook execution
                 history = ExecutionHistory(
+                    serial_id=task.serial_id,  # Copy serial_id from task
                     playbook_id=playbook.id,
                     host_id=task.host_id,
+                    user_id=task.user_id,  # Track user for failed executions too
                     status='failed',
                     started_at=task.started_at,
                     finished_at=task.finished_at,
@@ -1920,19 +2194,97 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                 'msg': f"Task '{current_task}' completed with status: {current_task_status}"
                             }
                             
-                            # Try to extract any useful info from the raw line
+                            # Extract more detailed information from the ansible output line
+                            # Try to find actual output/message content in the line
+                            extracted_msg = None
+                            
+                            # Look for output in different ansible formats
+                            if "=> " in line and not "=> {" in line:
+                                # Format: "ok: [host] => message content"
+                                parts = line.split("=> ", 1)
+                                if len(parts) > 1:
+                                    extracted_msg = parts[1].strip()
+                                    # Clean up common ansible formatting
+                                    if extracted_msg.startswith('"') and extracted_msg.endswith('"'):
+                                        extracted_msg = extracted_msg[1:-1]
+                            
+                            # Look for shell command output patterns
+                            elif "| " in line and (" rc=" in line or " changed=" in line):
+                                # Format: output | SUCCESS | rc=0 >>
+                                parts = line.split(" | ")
+                                if len(parts) >= 2:
+                                    # Get the content after the status
+                                    for part in parts:
+                                        if ">>" in part:
+                                            extracted_msg = part.split(">>", 1)[-1].strip()
+                                            break
+                            
+                            # Look for specific error messages in failure cases
+                            elif "failed:" in line or "fatal:" in line:
+                                # Try to extract error details
+                                if "msg=" in line:
+                                    msg_start = line.find("msg=") + 4
+                                    if line[msg_start] == '"':
+                                        # Find closing quote
+                                        msg_end = line.find('"', msg_start + 1)
+                                        if msg_end != -1:
+                                            extracted_msg = line[msg_start+1:msg_end]
+                                elif "stderr=" in line:
+                                    stderr_start = line.find("stderr=") + 7
+                                    if line[stderr_start] == '"':
+                                        stderr_end = line.find('"', stderr_start + 1)
+                                        if stderr_end != -1:
+                                            extracted_msg = f"Error: {line[stderr_start+1:stderr_end]}"
+                            
+                            # Update message and status based on line content
                             if "UNREACHABLE" in line:
-                                basic_data['msg'] = "Host is unreachable"
+                                basic_data['msg'] = extracted_msg or "Host is unreachable - connection failed"
                                 basic_data['failed'] = True
+                                basic_data['unreachable'] = True
                             elif "failed:" in line:
-                                basic_data['msg'] = "Task execution failed"
+                                basic_data['msg'] = extracted_msg or "Task execution failed - check task configuration"
                                 basic_data['failed'] = True
+                            elif "fatal:" in line:
+                                basic_data['msg'] = extracted_msg or "Fatal error during task execution"
+                                basic_data['failed'] = True
+                                basic_data['fatal'] = True
                             elif "changed:" in line:
-                                basic_data['msg'] = "Task completed with changes"
+                                basic_data['msg'] = extracted_msg or f"Task '{current_task}' completed successfully with changes"
                                 basic_data['changed'] = True
+                            elif "skipped:" in line:
+                                basic_data['msg'] = extracted_msg or f"Task '{current_task}' was skipped (condition not met)"
+                                basic_data['skipped'] = True
                             elif "ok:" in line:
-                                basic_data['msg'] = "Task completed successfully"
+                                basic_data['msg'] = extracted_msg or f"Task '{current_task}' completed successfully"
                                 basic_data['changed'] = False
+                            else:
+                                # Use extracted message if available, otherwise use default
+                                if extracted_msg:
+                                    basic_data['msg'] = extracted_msg
+                            
+                            # Look ahead for multi-line output (like shell command output)
+                            if not extracted_msg and i + 1 < len(output_lines):
+                                next_line = output_lines[i + 1].strip()
+                                # Check if next line contains command output or results
+                                if (next_line and not next_line.startswith("TASK [") and 
+                                    not any(status in next_line for status in ["ok:", "changed:", "failed:", "fatal:", "skipped:"])):
+                                    # This might be output from the previous task
+                                    if len(next_line) > 10 and not next_line.startswith("---"):  # Skip ansible separators
+                                        # Check a few more lines for additional context
+                                        multi_line_output = [next_line]
+                                        for j in range(i + 2, min(i + 5, len(output_lines))):
+                                            candidate_line = output_lines[j].strip()
+                                            if (candidate_line and not candidate_line.startswith("TASK [") and 
+                                                not any(status in candidate_line for status in ["ok:", "changed:", "failed:", "fatal:", "skipped:"]) and
+                                                not candidate_line.startswith("---")):
+                                                multi_line_output.append(candidate_line)
+                                            else:
+                                                break
+                                        
+                                        if multi_line_output and len(' '.join(multi_line_output)) > 20:
+                                            # Use the multi-line output as the message
+                                            basic_data['msg'] = ' '.join(multi_line_output)
+                                            basic_data['stdout'] = '\n'.join(multi_line_output)
                             
                             artifact_data = {
                                 'execution_id': execution_id,
@@ -1943,7 +2295,11 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                 'task_status': current_task_status
                             }
                             artifacts_data.append(artifact_data)
-                            print(f"✅ Created basic artifact with useful data: {register_name} for {original_hostname}")
+                            print(f"✅ Created enhanced artifact with extracted message: {register_name} for {original_hostname}")
+                            if extracted_msg:
+                                print(f"   📝 Extracted message: {extracted_msg[:100]}...")
+                            elif 'stdout' in basic_data:
+                                print(f"   📋 Found multi-line output: {basic_data['stdout'][:100]}...")
                     
                     break
             
@@ -2693,14 +3049,16 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 print(f"Username: {username}, Status: {overall_status}")
                 
                 history = ExecutionHistory(
+                    serial_id=task.serial_id,  # Copy serial_id from task
                     playbook_id=playbook.id,
                     host_id=primary_host_id,  # Use primary host for record (can be None for dynamic executions)
+                    user_id=task.user_id,  # Track which user initiated the task
                     status=overall_status,
                     started_at=task_started_at,
                     finished_at=task_finished_at,
                     output=full_output + status_details,
                     error_output='\n'.join(error_lines) if error_lines else None,
-                    username=username,
+                    username=username,  # Keep SSH username for backward compatibility
                     host_list=host_list_json
                 )
                 
@@ -2960,8 +3318,10 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
                 host_list_json = json.dumps([host.to_dict()])
                 
                 history = ExecutionHistory(
+                    serial_id=task.serial_id,  # Copy serial_id from task
                     playbook_id=playbook.id,
                     host_id=host.id,
+                    user_id=task.user_id,  # Track user for single host executions
                     status=task.status,
                     started_at=task.started_at,
                     finished_at=task.finished_at,

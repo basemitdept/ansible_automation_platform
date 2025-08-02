@@ -9,6 +9,34 @@ const api = axios.create({
   },
 });
 
+// Add request interceptor to include auth token
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Add response interceptor to handle auth errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token expired or invalid, redirect to login
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('currentUser');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
 // Playbooks API
 export const playbooksAPI = {
   getAll: () => api.get('/playbooks'),
@@ -91,6 +119,21 @@ export const apiTokensAPI = {
   update: (id, data) => api.put(`/tokens/${id}`, data),
   delete: (id) => api.delete(`/tokens/${id}`),
   regenerate: (id) => api.post(`/tokens/${id}/regenerate`)
+};
+
+// Authentication API
+export const authAPI = {
+  login: (username, password) => api.post('/auth/login', { username, password }),
+  logout: () => api.post('/auth/logout'),
+  getCurrentUser: () => api.get('/auth/current-user'),
+};
+
+// Users API
+export const usersAPI = {
+  getAll: () => api.get('/users'),
+  create: (data) => api.post('/users', data),
+  update: (id, data) => api.put(`/users/${id}`, data),
+  delete: (id) => api.delete(`/users/${id}`),
 };
 
 export default api; 

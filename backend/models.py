@@ -1,8 +1,46 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import uuid
+from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
+
+class User(db.Model):
+    __tablename__ = 'users'
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default='user')  # admin, editor, user
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def set_password(self, password):
+        """Hash and set password"""
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        """Check password against hash"""
+        return check_password_hash(self.password_hash, password)
+    
+    def has_permission(self, action):
+        """Check if user has permission for an action"""
+        if self.role == 'admin':
+            return True
+        elif self.role == 'editor':
+            return action not in ['delete_user', 'delete_playbook', 'delete_host', 'delete_credential', 'delete_webhook', 'create_user', 'edit_user']
+        elif self.role == 'user':
+            return action in ['read', 'view']
+        return False
+    
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'username': self.username,
+            'role': self.role,
+            'created_at': self.created_at.isoformat() + 'Z',
+            'updated_at': self.updated_at.isoformat() + 'Z'
+        }
 
 class Playbook(db.Model):
     __tablename__ = 'playbooks'
@@ -31,8 +69,8 @@ class Playbook(db.Model):
             'content': self.content,
             'description': self.description,
             'variables': variables_data,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'updated_at': self.updated_at.isoformat() + 'Z'
         }
 
 class HostGroup(db.Model):
@@ -51,8 +89,8 @@ class HostGroup(db.Model):
             'name': self.name,
             'description': self.description,
             'color': self.color,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'created_at': self.created_at.isoformat() + 'Z' + 'Z' if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() + 'Z' if self.updated_at else None,
             'host_count': len(self.hosts) if hasattr(self, 'hosts') else 0
         }
 
@@ -77,16 +115,18 @@ class Host(db.Model):
             'description': self.description,
             'group_id': str(self.group_id) if self.group_id else None,
             'group': self.group.to_dict() if self.group else None,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'updated_at': self.updated_at.isoformat() + 'Z'
         }
 
 class Task(db.Model):
     __tablename__ = 'tasks'
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    serial_id = db.Column(db.Integer, autoincrement=True, unique=True, nullable=True)  # Sequential task number
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
     host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
     status = db.Column(db.String(50), default='pending')
     started_at = db.Column(db.DateTime)
     finished_at = db.Column(db.DateTime)
@@ -96,6 +136,7 @@ class Task(db.Model):
     
     playbook = db.relationship('Playbook', backref='tasks')
     host = db.relationship('Host', backref='tasks')
+    user = db.relationship('User', backref='tasks')
     
     def to_dict(self):
         import json
@@ -114,15 +155,18 @@ class Task(db.Model):
         
         return {
             'id': str(self.id),
+            'serial_id': self.serial_id,
             'playbook_id': str(self.playbook_id),
             'host_id': str(self.host_id) if self.host_id else None,
+            'user_id': str(self.user_id) if self.user_id else None,
             'status': self.status,
-            'started_at': self.started_at.isoformat() if self.started_at else None,
-            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
+            'started_at': self.started_at.isoformat() + 'Z' if self.started_at else None,
+            'finished_at': self.finished_at.isoformat() + 'Z' if self.finished_at else None,
             'output': self.output,
             'error_output': self.error_output,
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'host': self.host.to_dict() if self.host else None,
+            'user': self.user.to_dict() if self.user else None,
             'hosts': hosts_data  # List of all hosts in multi-host execution
         }
 
@@ -145,8 +189,8 @@ class Credential(db.Model):
             'username': self.username,
             'description': self.description,
             'is_default': self.is_default,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'updated_at': self.updated_at.isoformat() + 'Z'
         }
 
 class Artifact(db.Model):
@@ -178,7 +222,7 @@ class Artifact(db.Model):
             'register_data': parsed_data,
             'host_name': self.host_name,
             'task_status': self.task_status,
-            'created_at': self.created_at.isoformat()
+            'created_at': self.created_at.isoformat() + 'Z'
         }
 
 class Webhook(db.Model):
@@ -230,9 +274,9 @@ class Webhook(db.Model):
             'default_variables': default_vars,
             'credential_id': str(self.credential_id) if self.credential_id else None,
             'description': self.description,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'last_triggered': self.last_triggered.isoformat() if self.last_triggered else None,
+            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'updated_at': self.updated_at.isoformat() + 'Z',
+            'last_triggered': self.last_triggered.isoformat() + 'Z' if self.last_triggered else None,
             'trigger_count': self.trigger_count,
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'credential': self.credential.to_dict() if self.credential else None,
@@ -243,19 +287,22 @@ class ExecutionHistory(db.Model):
     __tablename__ = 'execution_history'
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    serial_id = db.Column(db.Integer, nullable=True)  # Copy from Task.serial_id when task completes
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
     host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
     status = db.Column(db.String(50), nullable=False)
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     finished_at = db.Column(db.DateTime)
     output = db.Column(db.Text)
     error_output = db.Column(db.Text)
-    username = db.Column(db.String(255))
+    username = db.Column(db.String(255))  # Keep for backward compatibility
     host_list = db.Column(db.Text)  # JSON string of all hosts in multi-host execution
     webhook_id = db.Column(db.String(36), db.ForeignKey('webhooks.id'))  # Track webhook-triggered executions
     
     playbook = db.relationship('Playbook', backref='history')
     host = db.relationship('Host', backref='history')
+    user = db.relationship('User', backref='execution_history')
     webhook = db.relationship('Webhook', backref='executions')
     
     def to_dict(self):
@@ -275,17 +322,20 @@ class ExecutionHistory(db.Model):
         
         return {
             'id': str(self.id),
+            'serial_id': self.serial_id,
             'playbook_id': str(self.playbook_id),
             'host_id': str(self.host_id) if self.host_id else None,
+            'user_id': str(self.user_id) if self.user_id else None,
             'status': self.status,
-            'started_at': self.started_at.isoformat(),
-            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
+            'started_at': self.started_at.isoformat() + 'Z',
+            'finished_at': self.finished_at.isoformat() + 'Z' if self.finished_at else None,
             'output': self.output,
             'error_output': self.error_output,
-            'username': self.username,
+            'username': self.username or (self.user.username if self.user else None),
             'webhook_id': str(self.webhook_id) if self.webhook_id else None,
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'host': self.host.to_dict() if self.host else None,
+            'user': self.user.to_dict() if self.user else None,
             'hosts': hosts_data,  # List of all hosts in multi-host execution
             'webhook': self.webhook.to_dict() if self.webhook else None
         }
@@ -309,9 +359,9 @@ class ApiToken(db.Model):
             'token': self.token,
             'enabled': self.enabled,
             'description': self.description,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'last_used': self.last_used.isoformat() if self.last_used else None
+            'created_at': self.created_at.isoformat() + 'Z',
+            'updated_at': self.updated_at.isoformat() + 'Z',
+            'last_used': self.last_used.isoformat() + 'Z' if self.last_used else None
         }
 
 class PlaybookFile(db.Model):
@@ -340,6 +390,6 @@ class PlaybookFile(db.Model):
             'file_size': self.file_size,
             'mime_type': self.mime_type,
             'description': self.description,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'updated_at': self.updated_at.isoformat() + 'Z'
         } 

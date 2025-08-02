@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, theme, ConfigProvider, Switch } from 'antd';
+import { Layout, Menu, theme, ConfigProvider, Switch, Button, Space, Dropdown, Avatar, message } from 'antd';
 import {
   BookOutlined,
   DatabaseOutlined,
@@ -11,7 +11,10 @@ import {
   SunOutlined,
   MoonOutlined,
   KeyOutlined,
-  LinkOutlined
+  LinkOutlined,
+  UserOutlined,
+  LogoutOutlined,
+  SettingOutlined
 } from '@ant-design/icons';
 
 import Playbooks from './components/Playbooks';
@@ -22,7 +25,10 @@ import History from './components/History';
 import TaskDetail from './components/TaskDetail';
 import Credentials from './components/Credentials';
 import Webhooks from './components/Webhooks';
+import Users from './components/Users';
+import Login from './components/Login';
 import socketService from './services/socket';
+import { authAPI } from './services/api';
 
 const { Header, Sider, Content } = Layout;
 
@@ -33,6 +39,9 @@ function App() {
     const savedTheme = localStorage.getItem('ansible-portal-dark-mode');
     return savedTheme ? JSON.parse(savedTheme) : false;
   });
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -41,60 +50,178 @@ function App() {
     localStorage.setItem('ansible-portal-dark-mode', JSON.stringify(isDarkMode));
   }, [isDarkMode]);
 
-  // Initialize WebSocket connection when app starts
+  // Check authentication status on app start
   useEffect(() => {
-    socketService.connect();
-    
-    return () => {
-      socketService.disconnect();
-    };
+    checkAuthStatus();
   }, []);
+
+  // Initialize WebSocket connection when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      socketService.connect();
+      
+      return () => {
+        socketService.disconnect();
+      };
+    }
+  }, [isAuthenticated]);
+
+  const checkAuthStatus = async () => {
+    try {
+      const token = localStorage.getItem('authToken');
+      const savedUser = localStorage.getItem('currentUser');
+      
+      if (token && savedUser) {
+        // Verify token is still valid
+        const response = await authAPI.getCurrentUser();
+        setCurrentUser(response.data.user);
+        setIsAuthenticated(true);
+      } else {
+        // No token or user, redirect to login
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+      }
+    } catch (error) {
+      // Token invalid or expired
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('currentUser');
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLoginSuccess = (user, token) => {
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+    message.success(`Welcome back, ${user.username}!`);
+    navigate('/');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await authAPI.logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('currentUser');
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+      message.success('Logged out successfully');
+      navigate('/login');
+    }
+  };
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
   };
 
-  const menuItems = [
-    {
-      key: '/playbooks',
-      icon: <BookOutlined />,
-      label: 'Playbooks',
-    },
-    {
-      key: '/hosts',
-      icon: <DatabaseOutlined />,
-      label: 'Hosts',
-    },
-    {
-      key: '/credentials',
-      icon: <KeyOutlined />,
-      label: 'Credentials',
-    },
-    {
-      key: '/webhooks',
-      icon: <LinkOutlined />,
-      label: 'Webhooks',
-    },
-    {
-      key: '/editor',
-      icon: <PlayCircleOutlined />,
-      label: 'Run Playbook',
-    },
-    {
-      key: '/tasks',
-      icon: <ClockCircleOutlined />,
-      label: 'Running Tasks',
-    },
-    {
-      key: '/history',
-      icon: <HistoryOutlined />,
-      label: 'History',
-    },
-  ];
+  const getMenuItems = () => {
+    const items = [
+      {
+        key: '/playbooks',
+        icon: <BookOutlined />,
+        label: 'Playbooks',
+      },
+      {
+        key: '/hosts',
+        icon: <DatabaseOutlined />,
+        label: 'Hosts',
+      },
+      {
+        key: '/credentials',
+        icon: <KeyOutlined />,
+        label: 'Credentials',
+      },
+      {
+        key: '/webhooks',
+        icon: <LinkOutlined />,
+        label: 'Webhooks',
+      },
+      {
+        key: '/editor',
+        icon: <PlayCircleOutlined />,
+        label: 'Run Playbook',
+      },
+      {
+        key: '/tasks',
+        icon: <ClockCircleOutlined />,
+        label: 'Running Tasks',
+      },
+      {
+        key: '/history',
+        icon: <HistoryOutlined />,
+        label: 'History',
+      },
+    ];
+
+    // Add Users menu item only for admin and editor users (at the bottom)
+    if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'editor')) {
+      items.push({
+        key: '/users',
+        icon: <UserOutlined />,
+        label: 'Users',
+      });
+    }
+
+    return items;
+  };
 
   const handleMenuClick = ({ key }) => {
     navigate(key);
   };
+
+  const getUserDropdownItems = () => [
+    {
+      key: 'profile',
+      icon: <UserOutlined />,
+      label: currentUser?.username || 'Profile',
+      disabled: true,
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'role',
+      icon: <SettingOutlined />,
+      label: `Role: ${currentUser?.role || 'Unknown'}`,
+      disabled: true,
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'logout',
+      icon: <LogoutOutlined />,
+      label: 'Logout',
+      onClick: handleLogout,
+    },
+  ];
+
+  // Show loading spinner while checking authentication
+  if (loading) {
+    return (
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        height: '100vh',
+        background: isDarkMode ? '#141414' : '#f0f2f5'
+      }}>
+        <Space direction="vertical" align="center">
+          <RocketOutlined style={{ fontSize: '48px', color: '#1890ff' }} />
+          <div>Loading...</div>
+        </Space>
+      </div>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
 
   const AppContent = () => {
     const {
@@ -131,7 +258,7 @@ function App() {
             theme={isDarkMode ? "dark" : "light"}
             mode="inline"
             selectedKeys={[location.pathname]}
-            items={menuItems}
+            items={getMenuItems()}
             onClick={handleMenuClick}
             style={{ borderRight: 0 }}
           />
@@ -148,7 +275,7 @@ function App() {
             }}
           >
             <h2 style={{ margin: 0, color: colorText }}>
-              {menuItems.find(item => item.key === location.pathname)?.label || 'Ansible Automation Platform'}
+              {getMenuItems().find(item => item.key === location.pathname)?.label || 'Ansible Automation Platform'}
             </h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               <div style={{ color: colorText, fontSize: 14, opacity: 0.8 }}>
@@ -163,6 +290,20 @@ function App() {
                 />
                 <MoonOutlined style={{ color: isDarkMode ? '#722ed1' : '#ccc' }} />
               </div>
+              <Dropdown
+                menu={{ items: getUserDropdownItems() }}
+                trigger={['click']}
+                placement="bottomRight"
+              >
+                <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Avatar 
+                    size="small" 
+                    icon={<UserOutlined />} 
+                    style={{ backgroundColor: '#1890ff' }}
+                  />
+                  <span style={{ color: colorText }}>{currentUser?.username}</span>
+                </Button>
+              </Dropdown>
             </div>
           </Header>
           <Content
@@ -174,15 +315,16 @@ function App() {
             }}
           >
             <Routes>
-              <Route path="/" element={<Playbooks />} />
-              <Route path="/playbooks" element={<Playbooks />} />
-              <Route path="/hosts" element={<Hosts />} />
-              <Route path="/credentials" element={<Credentials />} />
-              <Route path="/webhooks" element={<Webhooks />} />
-              <Route path="/editor" element={<PlaybookEditor />} />
-              <Route path="/tasks" element={<Tasks />} />
-              <Route path="/tasks/:taskId" element={<TaskDetail />} />
-              <Route path="/history" element={<History />} />
+              <Route path="/" element={<Playbooks currentUser={currentUser} />} />
+              <Route path="/playbooks" element={<Playbooks currentUser={currentUser} />} />
+              <Route path="/hosts" element={<Hosts currentUser={currentUser} />} />
+              <Route path="/credentials" element={<Credentials currentUser={currentUser} />} />
+              <Route path="/webhooks" element={<Webhooks currentUser={currentUser} />} />
+              <Route path="/users" element={<Users currentUser={currentUser} />} />
+              <Route path="/editor" element={<PlaybookEditor currentUser={currentUser} />} />
+              <Route path="/tasks" element={<Tasks currentUser={currentUser} />} />
+              <Route path="/tasks/:taskId" element={<TaskDetail currentUser={currentUser} />} />
+              <Route path="/history" element={<History currentUser={currentUser} />} />
             </Routes>
           </Content>
         </Layout>

@@ -351,6 +351,17 @@ const History = () => {
 
   const columns = [
     {
+      title: 'ID',
+      dataIndex: 'serial_id',
+      key: 'serial_id',
+      render: (serial_id) => (
+        <Tag color="blue" style={{ fontWeight: 'bold' }}>
+          #{serial_id || 'N/A'}
+        </Tag>
+      ),
+      width: 80,
+    },
+    {
       title: 'Playbook',
       dataIndex: ['playbook', 'name'],
       key: 'playbook',
@@ -767,27 +778,167 @@ const History = () => {
                           <code>{artifact.register_name}</code>
                         </div>
                         <div style={{ marginTop: 8 }}>
-                          <Text strong>Task Summary:</Text>
-                          <pre
-                            style={{
-                              backgroundColor: '#f6f8fa',
-                              color: '#24292e',
-                              padding: '16px',
-                              borderRadius: '6px',
-                              marginTop: '8px',
-                              fontSize: '13px',
-                              fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
-                              maxHeight: '400px',
-                              overflow: 'auto',
-                              border: '1px solid #e1e4e8',
-                              whiteSpace: 'pre-wrap',
-                              lineHeight: '1.45'
-                            }}
-                          >
-                            {typeof artifact.register_data === 'string' 
-                              ? artifact.register_data 
-                              : JSON.stringify(artifact.register_data, null, 2)}
-                          </pre>
+                          {/* Enhanced message display */}
+                          {(() => {
+                            try {
+                              const data = typeof artifact.register_data === 'string' 
+                                ? JSON.parse(artifact.register_data) 
+                                : artifact.register_data;
+                              
+                              const msg = data?.msg;
+                              const stdout = data?.stdout;
+                              const stderr = data?.stderr;
+                              const changed = data?.changed;
+                              const failed = data?.failed;
+                              const rc = data?.rc;
+                              
+                              return (
+                                <div>
+                                  {/* Primary message */}
+                                  {msg && (
+                                    <div style={{ marginBottom: 12 }}>
+                                      <Text strong>Message:</Text>
+                                      <div style={{
+                                        backgroundColor: failed ? '#fff2f0' : changed ? '#fff7e6' : '#f6ffed',
+                                        border: failed ? '1px solid #ffccc7' : changed ? '1px solid #ffd591' : '1px solid #b7eb8f',
+                                        borderRadius: '6px',
+                                        padding: '12px',
+                                        marginTop: '4px',
+                                        fontFamily: 'inherit',
+                                        lineHeight: '1.6',
+                                        fontSize: '14px'
+                                      }}>
+                                        <span style={{ 
+                                          color: failed ? '#cf1322' : changed ? '#d46b08' : '#389e0d',
+                                          fontWeight: '500',
+                                          display: 'block',
+                                          wordBreak: 'break-word'
+                                        }}>
+                                          {msg}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Standard output */}
+                                  {stdout && stdout !== msg && (
+                                    <div style={{ marginBottom: 12 }}>
+                                      <Text strong>Output:</Text>
+                                      <pre style={{
+                                        backgroundColor: '#f6f8fa',
+                                        color: '#24292e',
+                                        border: '1px solid #e1e4e8',
+                                        borderRadius: '6px',
+                                        padding: '12px',
+                                        marginTop: '4px',
+                                        fontSize: '13px',
+                                        fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                                        maxHeight: '200px',
+                                        overflow: 'auto',
+                                        whiteSpace: 'pre-wrap',
+                                        lineHeight: '1.45'
+                                      }}>
+                                        {stdout}
+                                      </pre>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Error output */}
+                                  {stderr && (
+                                    <div style={{ marginBottom: 12 }}>
+                                      <Text strong style={{ color: '#cf1322' }}>Error Output:</Text>
+                                      <pre style={{
+                                        backgroundColor: '#fff2f0',
+                                        border: '1px solid #ffccc7',
+                                        borderRadius: '6px',
+                                        padding: '12px',
+                                        marginTop: '4px',
+                                        fontSize: '13px',
+                                        fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                                        maxHeight: '200px',
+                                        overflow: 'auto',
+                                        whiteSpace: 'pre-wrap',
+                                        lineHeight: '1.45',
+                                        color: '#cf1322'
+                                      }}>
+                                        {stderr}
+                                      </pre>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Task metadata */}
+                                  <div style={{ marginBottom: 12 }}>
+                                    <Space size="large">
+                                      {changed !== undefined && (
+                                        <Text>
+                                          <Text strong>Changed:</Text> 
+                                          <Tag color={changed ? 'orange' : 'green'} style={{ marginLeft: 4 }}>
+                                            {changed ? 'Yes' : 'No'}
+                                          </Tag>
+                                        </Text>
+                                      )}
+                                      {rc !== undefined && (
+                                        <Text>
+                                          <Text strong>Return Code:</Text> 
+                                          <Tag color={rc === 0 ? 'green' : 'red'} style={{ marginLeft: 4 }}>
+                                            {rc}
+                                          </Tag>
+                                        </Text>
+                                      )}
+                                    </Space>
+                                  </div>
+                                  
+                                  {/* Full JSON data (collapsible) */}
+                                  <Collapse size="small" ghost>
+                                    <Collapse.Panel header="View Full JSON Data" key="json">
+                                      <pre style={{
+                                        backgroundColor: '#f8f9fa',
+                                        color: '#212529',
+                                        padding: '16px',
+                                        borderRadius: '6px',
+                                        fontSize: '13px',
+                                        fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                                        maxHeight: '400px',
+                                        overflow: 'auto',
+                                        border: '1px solid #dee2e6',
+                                        whiteSpace: 'pre-wrap',
+                                        lineHeight: '1.45',
+                                        margin: 0
+                                      }}>
+                                        {JSON.stringify(data, null, 2)}
+                                      </pre>
+                                    </Collapse.Panel>
+                                  </Collapse>
+                                </div>
+                              );
+                            } catch (e) {
+                              // Fallback to original display
+                              return (
+                                <div>
+                                  <Text strong>Task Summary:</Text>
+                                  <pre style={{
+                                    backgroundColor: '#f8f9fa',
+                                    color: '#212529',
+                                    padding: '16px',
+                                    borderRadius: '6px',
+                                    marginTop: '8px',
+                                    fontSize: '13px',
+                                    fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                                    maxHeight: '400px',
+                                    overflow: 'auto',
+                                    border: '1px solid #dee2e6',
+                                    whiteSpace: 'pre-wrap',
+                                    lineHeight: '1.45',
+                                    margin: 0
+                                  }}>
+                                    {typeof artifact.register_data === 'string' 
+                                      ? artifact.register_data 
+                                      : JSON.stringify(artifact.register_data, null, 2)}
+                                  </pre>
+                                </div>
+                              );
+                            }
+                          })()}
                         </div>
                       </Collapse.Panel>
                     ))}

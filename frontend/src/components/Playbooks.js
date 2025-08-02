@@ -14,7 +14,8 @@ import {
   Upload,
   List,
   Divider,
-  Tooltip
+  Tooltip,
+  Alert
 } from 'antd';
 import {
   PlusOutlined,
@@ -30,13 +31,14 @@ import {
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { playbooksAPI, playbookFilesAPI } from '../services/api';
+import { hasPermission } from '../utils/permissions';
 import moment from 'moment';
 
 const { Title } = Typography;
 const { TextArea } = Input;
 const { Dragger } = Upload;
 
-const Playbooks = () => {
+const Playbooks = ({ currentUser }) => {
   const [playbooks, setPlaybooks] = useState([]);
   const [filteredPlaybooks, setFilteredPlaybooks] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -466,25 +468,36 @@ const Playbooks = () => {
       width: 120,
       render: (_, record) => (
         <Space>
-          <Button
-            type="text"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-            title="Edit"
-          />
-          <Popconfirm
-            title="Are you sure you want to delete this playbook?"
-            onConfirm={() => handleDelete(record.id)}
-            okText="Yes"
-            cancelText="No"
-          >
+          {hasPermission(currentUser, 'edit') ? (
             <Button
               type="text"
-              danger
-              icon={<DeleteOutlined />}
-              title="Delete"
+              icon={<EditOutlined />}
+              onClick={() => handleEdit(record)}
+              title="Edit"
             />
-          </Popconfirm>
+          ) : (
+            <Button
+              type="text"
+              icon={<CodeOutlined />}
+              onClick={() => handleEdit(record)}
+              title="View"
+            />
+          )}
+          {hasPermission(currentUser, 'delete_playbook') && (
+            <Popconfirm
+              title="Are you sure you want to delete this playbook?"
+              onConfirm={() => handleDelete(record.id)}
+              okText="Yes"
+              cancelText="No"
+            >
+              <Button
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                title="Delete"
+              />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -508,17 +521,28 @@ const Playbooks = () => {
               style={{ width: 250 }}
               allowClear
             />
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleCreate}
-            >
-              New Playbook
-            </Button>
+            {hasPermission(currentUser, 'create') && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleCreate}
+              >
+                New Playbook
+              </Button>
+            )}
           </Space>
         }
         className="card-container"
       >
+        {currentUser && currentUser.role === 'user' && (
+          <Alert
+            message="Read-Only Access"
+            description="You have read-only permissions. You can view playbooks but cannot create, edit, or delete them."
+            type="info"
+            style={{ marginBottom: 16 }}
+            showIcon
+          />
+        )}
         <Table
           columns={columns}
           dataSource={filteredPlaybooks}
