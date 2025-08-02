@@ -69,7 +69,7 @@ class Playbook(db.Model):
             'content': self.content,
             'description': self.description,
             'variables': variables_data,
-            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z'
         }
 
@@ -89,7 +89,7 @@ class HostGroup(db.Model):
             'name': self.name,
             'description': self.description,
             'color': self.color,
-            'created_at': self.created_at.isoformat() + 'Z' + 'Z' if self.created_at else None,
+            'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
             'updated_at': self.updated_at.isoformat() + 'Z' if self.updated_at else None,
             'host_count': len(self.hosts) if hasattr(self, 'hosts') else 0
         }
@@ -101,6 +101,8 @@ class Host(db.Model):
     name = db.Column(db.String(255), nullable=False, unique=True)
     hostname = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text)
+    os_type = db.Column(db.String(50), default='linux')  # 'linux' or 'windows'
+    port = db.Column(db.Integer, default=22)  # SSH port for Linux (22) or WinRM port for Windows (5986)
     group_id = db.Column(db.String(36), db.ForeignKey('host_groups.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -113,9 +115,11 @@ class Host(db.Model):
             'name': self.name,
             'hostname': self.hostname,
             'description': self.description,
+            'os_type': self.os_type,
+            'port': self.port,
             'group_id': str(self.group_id) if self.group_id else None,
             'group': self.group.to_dict() if self.group else None,
-            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z'
         }
 
@@ -193,7 +197,7 @@ class Credential(db.Model):
             'username': self.username,
             'description': self.description,
             'is_default': self.is_default,
-            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z'
         }
 
@@ -278,7 +282,7 @@ class Webhook(db.Model):
             'default_variables': default_vars,
             'credential_id': str(self.credential_id) if self.credential_id else None,
             'description': self.description,
-            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z',
             'last_triggered': self.last_triggered.isoformat() + 'Z' if self.last_triggered else None,
             'trigger_count': self.trigger_count,
@@ -365,10 +369,10 @@ class ApiToken(db.Model):
             'token': self.token,
             'enabled': self.enabled,
             'description': self.description,
-            'created_at': self.created_at.isoformat() + 'Z',
-            'updated_at': self.updated_at.isoformat() + 'Z',
+            'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() + 'Z' if self.updated_at else None,
             'last_used': self.last_used.isoformat() + 'Z' if self.last_used else None,
-            'usage_count': self.usage_count,
+            'usage_count': self.usage_count or 0,
             'expires_at': self.expires_at.isoformat() + 'Z' if self.expires_at else None
         }
 
@@ -398,6 +402,6 @@ class PlaybookFile(db.Model):
             'file_size': self.file_size,
             'mime_type': self.mime_type,
             'description': self.description,
-            'created_at': self.created_at.isoformat() + 'Z' + 'Z',
+            'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z'
         } 

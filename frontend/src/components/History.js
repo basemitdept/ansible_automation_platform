@@ -52,7 +52,7 @@ const History = () => {
   const [selectedExecution, setSelectedExecution] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const autoRefresh = true; // Always auto refresh in background
   const [lastRefresh, setLastRefresh] = useState(null);
   const intervalRef = useRef(null);
   const isPageVisible = useRef(true);
@@ -519,52 +519,13 @@ const History = () => {
         title={
           <Space>
             <HistoryOutlined />
-            <Title level={4} style={{ margin: 0 }}>
-              Execution History
-              {loading && autoRefresh && (
-                <ReloadOutlined 
-                  spin 
-                  style={{ 
-                    marginLeft: 8, 
-                    fontSize: '14px', 
-                    color: '#1890ff' 
-                  }} 
-                />
-              )}
-            </Title>
+            <Title level={4} style={{ margin: 0 }}>Execution History</Title>
           </Space>
         }
         extra={
-          <Space>
-            <Tooltip title={autoRefresh ? "Auto-refresh is ON (every 10s)" : "Auto-refresh is OFF"}>
-              <Space>
-                <Switch
-                  checked={autoRefresh}
-                  onChange={setAutoRefresh}
-                  checkedChildren={<ReloadOutlined />}
-                  unCheckedChildren={<PauseCircleOutlined />}
-                  size="small"
-                />
-                <span style={{ 
-                  fontSize: '12px', 
-                  color: autoRefresh ? '#52c41a' : '#666',
-                  fontWeight: autoRefresh ? 'bold' : 'normal'
-                }}>
-                  Auto-refresh {autoRefresh && '●'}
-                </span>
-              </Space>
-            </Tooltip>
-            {lastRefresh && (
-              <Tooltip title={`Last refreshed: ${lastRefresh.toLocaleTimeString()}`}>
-                <span style={{ fontSize: '11px', color: '#999' }}>
-                  {moment(lastRefresh).fromNow()}
-                </span>
-              </Tooltip>
-            )}
-            <Button onClick={fetchHistory} loading={loading} icon={<ReloadOutlined />}>
-              Refresh
-            </Button>
-          </Space>
+          <Button onClick={fetchHistory} loading={loading} icon={<ReloadOutlined />}>
+            Refresh
+          </Button>
         }
         className="card-container"
       >

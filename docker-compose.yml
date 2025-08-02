@@ -13,6 +13,7 @@ services:
       - ./backend/localhost_setup.sql:/docker-entrypoint-initdb.d/03-localhost_setup.sql
       - ./backend/playbook_files_migration.sql:/docker-entrypoint-initdb.d/04-playbook_files_migration.sql
       - ./backend/fix_host_id_nullable.sql:/docker-entrypoint-initdb.d/05-fix_host_id_nullable.sql
+      - ./backend/06-host_os_port_migration.sql:/docker-entrypoint-initdb.d/06-host_os_port_migration.sql
     ports:
       - "5432:5432"
     networks:

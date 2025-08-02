@@ -1,0 +1,8 @@
+---
+- name: Sample Linux playbook
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update system package
+      command: timeout 1000
+    

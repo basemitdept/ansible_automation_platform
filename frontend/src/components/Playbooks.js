@@ -15,7 +15,8 @@ import {
   List,
   Divider,
   Tooltip,
-  Alert
+  Alert,
+  Select
 } from 'antd';
 import {
   PlusOutlined,
@@ -171,11 +172,38 @@ const Playbooks = ({ currentUser }) => {
     }
   };
 
-  const handleCreate = () => {
-    setEditingPlaybook(null);
-    form.resetFields();
-    const defaultContent = `---
-- name: Sample playbook
+  const getDefaultContent = (osType = 'linux') => {
+    if (osType === 'windows') {
+      return `---
+- name: Sample Windows playbook
+  hosts: all
+  gather_facts: yes
+  tasks:
+    - name: Ensure a service exists and is running
+      win_service:
+        name: Spooler
+        state: started
+    
+    - name: Install chocolatey packages
+      win_chocolatey:
+        name:
+          - googlechrome
+          - notepadplusplus
+          - 7zip
+        state: present
+    
+    - name: Create a directory
+      win_file:
+        path: C:\\temp\\example
+        state: directory
+    
+    - name: Copy a file
+      win_copy:
+        src: files/example.txt
+        dest: C:\\temp\\example\\example.txt`;
+    } else {
+      return `---
+- name: Sample Linux playbook
   hosts: all
   become: yes
   tasks:
@@ -190,13 +218,41 @@ const Playbooks = ({ currentUser }) => {
           - curl
           - wget
           - vim
-        state: present`;
+        state: present
+    
+    - name: Create a directory
+      file:
+        path: /tmp/example
+        state: directory
+        mode: '0755'
+    
+    - name: Copy a file
+      copy:
+        src: files/example.txt
+        dest: /tmp/example/example.txt
+        mode: '0644'`;
+    }
+  };
+
+  const handleCreate = () => {
+    setEditingPlaybook(null);
+    form.resetFields();
+    const defaultContent = getDefaultContent('linux'); // Default to Linux
     
     setEditorContent(defaultContent);
     form.setFieldsValue({
-      content: defaultContent
+      content: defaultContent,
+      os_type: 'linux'
     });
     setModalVisible(true);
+  };
+
+  const handleOSTypeChange = (osType) => {
+    const newContent = getDefaultContent(osType);
+    setEditorContent(newContent);
+    form.setFieldsValue({
+      content: newContent
+    });
   };
 
   const handleEdit = (playbook) => {
@@ -452,14 +508,22 @@ const Playbooks = ({ currentUser }) => {
       title: 'Created',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (date) => moment(date).format('MMM DD, YYYY HH:mm'),
+      render: (date) => {
+        if (!date) return 'N/A';
+        const momentDate = moment(date);
+        return momentDate.isValid() ? momentDate.format('MMM DD, YYYY HH:mm') : 'Invalid date';
+      },
       width: 180,
     },
     {
       title: 'Updated',
       dataIndex: 'updated_at',
       key: 'updated_at',
-      render: (date) => moment(date).format('MMM DD, YYYY HH:mm'),
+      render: (date) => {
+        if (!date) return 'N/A';
+        const momentDate = moment(date);
+        return momentDate.isValid() ? momentDate.format('MMM DD, YYYY HH:mm') : 'Invalid date';
+      },
       width: 180,
     },
     {
@@ -591,6 +655,29 @@ const Playbooks = ({ currentUser }) => {
             ]}
           >
             <Input placeholder="e.g., nginx-setup" />
+          </Form.Item>
+
+          <Form.Item
+            label="Target Operating System"
+            name="os_type"
+            initialValue="linux"
+            rules={[{ required: true, message: 'Please select target OS' }]}
+          >
+            <Select 
+              placeholder="Select target operating system"
+              onChange={handleOSTypeChange}
+            >
+              <Select.Option value="linux">
+                <Space>
+                  🐧 Linux (SSH - Port 22)
+                </Space>
+              </Select.Option>
+              <Select.Option value="windows">
+                <Space>
+                  🪟 Windows (WinRM - Port 5986)
+                </Space>
+              </Select.Option>
+            </Select>
           </Form.Item>
 
           <Form.Item

@@ -278,9 +278,6 @@ function App() {
               {getMenuItems().find(item => item.key === location.pathname)?.label || 'Ansible Automation Platform'}
             </h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <div style={{ color: colorText, fontSize: 14, opacity: 0.8 }}>
-                Automate your infrastructure with confidence
-              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <SunOutlined style={{ color: isDarkMode ? '#ccc' : '#faad14' }} />
                 <Switch

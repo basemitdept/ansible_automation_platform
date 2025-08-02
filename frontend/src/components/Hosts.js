@@ -6,6 +6,7 @@ import {
   Modal,
   Form,
   Input,
+  InputNumber,
   message,
   Popconfirm,
   Space,
@@ -252,6 +253,28 @@ const Hosts = () => {
           <code>{text}</code>
         </Space>
       ),
+    },
+    {
+      title: 'OS Type',
+      dataIndex: 'os_type',
+      key: 'os_type',
+      render: (os_type) => (
+        <Tag color={os_type === 'windows' ? 'blue' : 'green'}>
+          {os_type === 'windows' ? '🪟 Windows' : '🐧 Linux'}
+        </Tag>
+      ),
+      width: 120,
+    },
+    {
+      title: 'Port',
+      dataIndex: 'port',
+      key: 'port',
+      render: (port, record) => (
+        <Tag color={record.os_type === 'windows' ? 'orange' : 'cyan'}>
+          {port} {record.os_type === 'windows' ? '(WinRM)' : '(SSH)'}
+        </Tag>
+      ),
+      width: 120,
     },
     {
       title: 'Group',
@@ -519,6 +542,50 @@ const Hosts = () => {
             rules={[{ required: true, message: 'Please enter hostname or IP address' }]}
           >
             <Input placeholder="e.g., 192.168.1.100 or server.example.com" />
+          </Form.Item>
+
+          <Form.Item
+            label="Operating System"
+            name="os_type"
+            initialValue="linux"
+            rules={[{ required: true, message: 'Please select operating system' }]}
+          >
+            <Select 
+              placeholder="Select OS type"
+              onChange={(value) => {
+                // Auto-set default port based on OS type
+                const defaultPort = value === 'windows' ? 5986 : 22;
+                form.setFieldsValue({ port: defaultPort });
+              }}
+            >
+              <Select.Option value="linux">
+                <Space>
+                  🐧 Linux (SSH - Port 22)
+                </Space>
+              </Select.Option>
+              <Select.Option value="windows">
+                <Space>
+                  🪟 Windows (WinRM - Port 5986)
+                </Space>
+              </Select.Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            label="Port"
+            name="port"
+            initialValue={22}
+            rules={[
+              { required: true, message: 'Please enter port number' },
+              { type: 'number', min: 1, max: 65535, message: 'Port must be between 1 and 65535' }
+            ]}
+          >
+            <InputNumber 
+              min={1} 
+              max={65535} 
+              placeholder="e.g., 22 for SSH or 5986 for WinRM"
+              style={{ width: '100%' }}
+            />
           </Form.Item>
 
           <Form.Item

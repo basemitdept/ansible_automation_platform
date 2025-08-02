@@ -167,6 +167,12 @@ COMMENT ON TABLE webhooks IS 'Webhook endpoints for API-triggered executions';
 COMMENT ON TABLE artifacts IS 'Stored output from Ansible register variables';
 
 COMMENT ON COLUMN playbooks.variables IS 'JSON array storing variable definitions';
+-- Create schema migrations tracking table
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    migration_name VARCHAR(255) PRIMARY KEY,
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 COMMENT ON COLUMN hosts.group_id IS 'Foreign key to host_groups table';
 COMMENT ON COLUMN tasks.host_list IS 'JSON array of all hosts in multi-host execution';
 COMMENT ON COLUMN execution_history.host_list IS 'JSON array of all hosts in multi-host execution';

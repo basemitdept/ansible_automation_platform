@@ -9,4 +9,8 @@ ansible==8.2.0
 python-socketio==5.8.0
 eventlet==0.33.3
 python-dotenv==1.0.0
-werkzeug==2.3.7 
+werkzeug==2.3.7
+psutil==5.9.5
+pywinrm==0.4.3
+requests==2.31.0
+requests-ntlm==1.2.0 

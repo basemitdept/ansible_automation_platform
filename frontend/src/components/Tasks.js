@@ -35,7 +35,7 @@ const { Title } = Typography;
 const Tasks = () => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const autoRefresh = true; // Always auto refresh in background
   const [lastRefresh, setLastRefresh] = useState(null);
   const navigate = useNavigate();
   const intervalRef = useRef(null);
@@ -340,52 +340,13 @@ const Tasks = () => {
         title={
           <Space>
             <ClockCircleOutlined />
-            <Title level={4} style={{ margin: 0 }}>
-              Running Tasks
-              {loading && autoRefresh && (
-                <ReloadOutlined 
-                  spin 
-                  style={{ 
-                    marginLeft: 8, 
-                    fontSize: '14px', 
-                    color: '#1890ff' 
-                  }} 
-                />
-              )}
-            </Title>
+            <Title level={4} style={{ margin: 0 }}>Running Tasks</Title>
           </Space>
         }
         extra={
-          <Space>
-            <Tooltip title={autoRefresh ? "Auto-refresh is ON (every 5s)" : "Auto-refresh is OFF"}>
-              <Space>
-                <Switch
-                  checked={autoRefresh}
-                  onChange={setAutoRefresh}
-                  checkedChildren={<ReloadOutlined />}
-                  unCheckedChildren={<PauseCircleOutlined />}
-                  size="small"
-                />
-                <span style={{ 
-                  fontSize: '12px', 
-                  color: autoRefresh ? '#52c41a' : '#666',
-                  fontWeight: autoRefresh ? 'bold' : 'normal'
-                }}>
-                  Auto-refresh {autoRefresh && '●'}
-                </span>
-              </Space>
-            </Tooltip>
-            {lastRefresh && (
-              <Tooltip title={`Last refreshed: ${lastRefresh.toLocaleTimeString()}`}>
-                <span style={{ fontSize: '11px', color: '#999' }}>
-                  {moment(lastRefresh).fromNow()}
-                </span>
-              </Tooltip>
-            )}
-            <Button onClick={fetchTasks} loading={loading} icon={<ReloadOutlined />}>
-              Refresh
-            </Button>
-          </Space>
+          <Button onClick={fetchTasks} loading={loading} icon={<ReloadOutlined />}>
+            Refresh
+          </Button>
         }
         className="card-container"
       >

@@ -191,8 +191,18 @@ const Users = ({ currentUser }) => {
       title: 'Created',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (date) => moment(date).format('MMM DD, YYYY'),
-      sorter: (a, b) => moment(a.created_at).unix() - moment(b.created_at).unix(),
+      render: (date) => {
+        if (!date) return 'N/A';
+        const momentDate = moment(date);
+        return momentDate.isValid() ? momentDate.format('MMM DD, YYYY') : 'Invalid date';
+      },
+      sorter: (a, b) => {
+        const dateA = moment(a.created_at);
+        const dateB = moment(b.created_at);
+        if (!dateA.isValid()) return 1;
+        if (!dateB.isValid()) return -1;
+        return dateA.unix() - dateB.unix();
+      },
     },
     {
       title: 'Actions',

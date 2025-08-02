@@ -647,10 +647,17 @@ def get_hosts():
 @app.route('/api/hosts', methods=['POST'])
 def create_host():
     data = request.json
+    
+    # Set default port based on OS type
+    os_type = data.get('os_type', 'linux')
+    default_port = 5986 if os_type == 'windows' else 22
+    
     host = Host(
         name=data['name'],
         hostname=data['hostname'],
         description=data.get('description', ''),
+        os_type=os_type,
+        port=data.get('port', default_port),
         group_id=data.get('group_id')
     )
     
@@ -719,9 +726,18 @@ def update_host(host_id):
     host = Host.query.get_or_404(host_id)
     data = request.json
     
+    # Set default port based on OS type if not provided
+    os_type = data.get('os_type', host.os_type)
+    if 'port' not in data and 'os_type' in data:
+        # If OS type changed but port not specified, set default port
+        default_port = 5986 if os_type == 'windows' else 22
+        data['port'] = default_port
+    
     host.name = data['name']
     host.hostname = data['hostname']
     host.description = data.get('description', '')
+    host.os_type = os_type
+    host.port = data.get('port', host.port)
     host.group_id = data.get('group_id', host.group_id)
     host.updated_at = datetime.utcnow()
     
@@ -1333,13 +1349,17 @@ def run_webhook_playbook(task_id, playbook_data, host_objects, username, passwor
             self.name = host_dict['name']
             self.hostname = host_dict['hostname']
             self.description = host_dict.get('description', '')
+            self.os_type = host_dict.get('os_type', 'linux')
+            self.port = host_dict.get('port', 22)
         
         def to_dict(self):
             return {
                 'id': self.id,
                 'name': self.name,
                 'hostname': self.hostname,
-                'description': self.description
+                'description': self.description,
+                'os_type': self.os_type,
+                'port': self.port
             }
     
     playbook = SimplePlaybook(playbook_data)
@@ -1394,16 +1414,23 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
             # Add hosts to both 'targets' and 'all' groups for compatibility
             inv_content = "[targets]\n"
             for host in hosts:
-                # Only use the hostname (IP address) to avoid running against both name and IP
-                inv_content += f"{host.hostname}\n"
+                # Include port and connection type based on OS
+                if getattr(host, 'os_type', 'linux') == 'windows':
+                    # Windows host - use WinRM
+                    port = getattr(host, 'port', 5986)
+                    inv_content += f"{host.hostname} ansible_port={port} ansible_connection=winrm ansible_winrm_transport=basic ansible_winrm_server_cert_validation=ignore\n"
+                else:
+                    # Linux host - use SSH
+                    port = getattr(host, 'port', 22)
+                    inv_content += f"{host.hostname} ansible_port={port} ansible_connection=ssh\n"
             
             # Add dynamic IPs from variables if 'ips' or 'hosts' variable is provided
             dynamic_ips = set()
-            print(f"🔍 DEBUG: Checking for dynamic IPs in variables: {variables}")
+
             if variables:
                 # Check for 'ips' variable first, then 'hosts' variable
                 ips_value = variables.get('ips') or variables.get('hosts')
-                print(f"🔍 DEBUG: Found ips/hosts value: '{ips_value}'")
+
                 if ips_value and isinstance(ips_value, str):
                     # Split comma-separated IPs and add them to inventory
                     for ip in ips_value.split(','):
@@ -1411,13 +1438,13 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                         if ip and ip not in ['all', 'targets']:  # Skip special keywords
                             dynamic_ips.add(ip)
                             inv_content += f"{ip}\n"
-                            print(f"🔍 DEBUG: Added dynamic IP to inventory: {ip}")
+
             
-            print(f"🔍 DEBUG: Total dynamic IPs found: {len(dynamic_ips)} - {list(dynamic_ips)}")
-            print(f"🔍 DEBUG: Total hosts from GUI: {len(hosts)}")
+
+
             
-            if len(hosts) == 0 and len(dynamic_ips) == 0:
-                print(f"⚠️  WARNING: No hosts from GUI and no dynamic IPs - execution may fail")
+
+
             
             # Also add to 'all' group for playbooks that use 'hosts: all'
             inv_content += "\n[all]\n"
@@ -1523,8 +1550,77 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                     'output': line
                 })
         
-        # Wait for process to complete
-        process.wait()
+        # Wait for process to complete with 2-minute timeout
+        TASK_TIMEOUT = 300  # 5 minutes in seconds
+        
+        try:
+            process.wait(timeout=TASK_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            print(f"🚨 WEBHOOK TIMEOUT: Task exceeded {TASK_TIMEOUT} seconds (5 minutes), terminating...")
+            
+            # Kill the process group
+            try:
+                import psutil
+                parent_pid = process.pid
+                parent = psutil.Process(parent_pid)
+                children = parent.children(recursive=True)
+                
+                # Terminate all processes
+                for child in children:
+                    try:
+                        child.terminate()
+                    except psutil.NoSuchProcess:
+                        pass
+                parent.terminate()
+                
+                # Wait then force kill if needed
+                try:
+                    parent.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    for child in children:
+                        try:
+                            child.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+                    parent.kill()
+                    
+            except Exception as e:
+                print(f"Error terminating webhook process: {e}")
+            
+            # Mark webhook task as failed due to timeout
+            with app.app_context():
+                task = Task.query.get(task_id)
+                if task:
+                    task.status = 'failed'
+                    task.finished_at = datetime.utcnow()
+                    task.error_output = f"Webhook timeout: Execution exceeded {TASK_TIMEOUT} seconds (5 minutes) and was terminated."
+                    db.session.commit()
+                    
+                    # Create execution history for webhook timeout
+                    history = ExecutionHistory(
+                        serial_id=task.serial_id,
+                        playbook_id=task.playbook_id,
+                        host_id=task.host_id,
+                        user_id=task.user_id,
+                        status='failed',
+                        started_at=task.started_at,
+                        finished_at=task.finished_at,
+                        output=task.output or '',
+                        error_output=task.error_output,
+                        host_list=task.host_list,
+                        webhook_id=webhook_id
+                    )
+                    db.session.add(history)
+                    db.session.commit()
+                    
+                    # Emit timeout notification
+                    socketio.emit('task_update', {
+                        'task_id': str(task_id),
+                        'status': 'failed',
+                        'message': f'Webhook task terminated due to timeout ({TASK_TIMEOUT}s - 5 minutes)'
+                    })
+            
+            return  # Exit early due to timeout
         
         # Get any remaining stderr
         stderr_output = process.stderr.read()
@@ -2513,18 +2609,34 @@ def analyze_ansible_output(output, hosts, variables=None):
                 host_results[host.hostname] = 'failed'
             elif f"ok: [{host.hostname}]" in output or f"changed: [{host.hostname}]" in output:
                 # Check for task failures
-                if task_failures[host.hostname]['failed_tasks'] > 0:
+                failed_tasks = task_failures[host.hostname]['failed_tasks']
+                successful_tasks = task_failures[host.hostname]['successful_tasks']
+                
+                if failed_tasks > 0 and successful_tasks > 0:
+                    # Some tasks failed, some succeeded = partial
                     host_results[host.hostname] = 'partial'
+                elif failed_tasks > 0 and successful_tasks == 0:
+                    # All tasks failed = failed
+                    host_results[host.hostname] = 'failed'
                 else:
+                    # No tasks failed = success
                     host_results[host.hostname] = 'success'
     
     # Default unknown hosts to success if we couldn't determine status but no explicit failures were found
     for host_name, status in host_results.items():
         if status == 'unknown':
             # Check if there were any explicit failures for this host
-            if task_failures[host_name]['failed_tasks'] > 0:
+            failed_tasks = task_failures[host_name]['failed_tasks']
+            successful_tasks = task_failures[host_name]['successful_tasks']
+            
+            if failed_tasks > 0 and successful_tasks > 0:
+                # Some tasks failed, some succeeded = partial
                 host_results[host_name] = 'partial'
-                print(f"Host {host_name} defaulted to partial: had {task_failures[host_name]['failed_tasks']} failed tasks")
+                print(f"Host {host_name} defaulted to partial: had {failed_tasks} failed tasks and {successful_tasks} successful tasks")
+            elif failed_tasks > 0 and successful_tasks == 0:
+                # All tasks failed = failed
+                host_results[host_name] = 'failed'
+                print(f"Host {host_name} defaulted to failed: had {failed_tasks} failed tasks and no successful tasks")
             elif 'UNREACHABLE!' in output or 'FAILED!' in output or 'fatal:' in output:
                 # Only mark as failed if there are explicit failure indicators in the output
                 host_results[host_name] = 'failed'
@@ -2559,13 +2671,17 @@ def run_ansible_playbook_multi_host_safe(task_id, playbook_data, host_data, user
             self.name = host_dict['name']
             self.hostname = host_dict['hostname']
             self.description = host_dict.get('description', '')
+            self.os_type = host_dict.get('os_type', 'linux')
+            self.port = host_dict.get('port', 22)
         
         def to_dict(self):
             return {
                 'id': self.id,
                 'name': self.name,
                 'hostname': self.hostname,
-                'description': self.description
+                'description': self.description,
+                'os_type': self.os_type,
+                'port': self.port
             }
     
     # Recreate objects
@@ -2613,16 +2729,23 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
             # Add hosts to both 'targets' and 'all' groups for compatibility
             inv_content = "[targets]\n"
             for host in hosts:
-                # Only use the hostname (IP address) to avoid running against both name and IP
-                inv_content += f"{host.hostname}\n"
+                # Include port and connection type based on OS
+                if getattr(host, 'os_type', 'linux') == 'windows':
+                    # Windows host - use WinRM
+                    port = getattr(host, 'port', 5986)
+                    inv_content += f"{host.hostname} ansible_port={port} ansible_connection=winrm ansible_winrm_transport=basic ansible_winrm_server_cert_validation=ignore\n"
+                else:
+                    # Linux host - use SSH
+                    port = getattr(host, 'port', 22)
+                    inv_content += f"{host.hostname} ansible_port={port} ansible_connection=ssh\n"
             
             # Add dynamic IPs from variables if 'ips' or 'hosts' variable is provided
             dynamic_ips = set()
-            print(f"🔍 DEBUG: Checking for dynamic IPs in variables: {variables}")
+
             if variables:
                 # Check for 'ips' variable first, then 'hosts' variable
                 ips_value = variables.get('ips') or variables.get('hosts')
-                print(f"🔍 DEBUG: Found ips/hosts value: '{ips_value}'")
+
                 if ips_value and isinstance(ips_value, str):
                     # Split comma-separated IPs and add them to inventory
                     for ip in ips_value.split(','):
@@ -2630,13 +2753,13 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                         if ip and ip not in ['all', 'targets']:  # Skip special keywords
                             dynamic_ips.add(ip)
                             inv_content += f"{ip}\n"
-                            print(f"🔍 DEBUG: Added dynamic IP to inventory: {ip}")
+
             
-            print(f"🔍 DEBUG: Total dynamic IPs found: {len(dynamic_ips)} - {list(dynamic_ips)}")
-            print(f"🔍 DEBUG: Total hosts from GUI: {len(hosts)}")
+
+
             
-            if len(hosts) == 0 and len(dynamic_ips) == 0:
-                print(f"⚠️  WARNING: No hosts from GUI and no dynamic IPs - execution may fail")
+
+
             
             # Also add to 'all' group for playbooks that use 'hosts: all'
             inv_content += "\n[all]\n"
@@ -2875,8 +2998,89 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
         
         print(f"Finished reading output for task {task_id}. Total lines: {line_count}")
         
-        # Wait for process to complete
-        process.wait()
+        # Wait for process to complete with 2-minute timeout
+        import signal
+        import psutil
+        
+        TASK_TIMEOUT = 300  # 5 minutes in seconds
+        
+        try:
+            process.wait(timeout=TASK_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            print(f"🚨 TIMEOUT: Task exceeded {TASK_TIMEOUT} seconds (5 minutes), terminating...")
+            
+            # Kill the entire process group to ensure all child processes are terminated
+            try:
+                parent_pid = process.pid
+                parent = psutil.Process(parent_pid)
+                children = parent.children(recursive=True)
+                
+                # Terminate children first
+                for child in children:
+                    try:
+                        child.terminate()
+                    except psutil.NoSuchProcess:
+                        pass
+                
+                # Terminate parent
+                parent.terminate()
+                
+                # Wait a bit for graceful termination
+                try:
+                    parent.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    # Force kill if still running
+                    for child in children:
+                        try:
+                            child.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+                    parent.kill()
+                    
+            except psutil.NoSuchProcess:
+                pass  # Process already terminated
+            except Exception as e:
+                print(f"Error terminating process: {e}")
+            
+            # Mark task as failed due to timeout
+            with app.app_context():
+                task = Task.query.get(task_id)
+                if task:
+                    task.status = 'failed'
+                    task.finished_at = datetime.utcnow()
+                    task.error_output = f"Task timeout: Execution exceeded {TASK_TIMEOUT} seconds (5 minutes) and was terminated."
+                    db.session.commit()
+                    
+                    # Create execution history for timeout
+                    history = ExecutionHistory(
+                        serial_id=task.serial_id,
+                        playbook_id=task.playbook_id,
+                        host_id=task.host_id,
+                        user_id=task.user_id,
+                        status='failed',
+                        started_at=task.started_at,
+                        finished_at=task.finished_at,
+                        output=task.output or '',
+                        error_output=task.error_output,
+                        host_list=task.host_list,
+                        webhook_id=task.webhook_id
+                    )
+                    db.session.add(history)
+                    db.session.commit()
+                    
+                    # Emit timeout notification
+                    socketio.emit('task_update', {
+                        'task_id': str(task_id),
+                        'status': 'failed',
+                        'message': f'Task terminated due to timeout ({TASK_TIMEOUT}s - 5 minutes)'
+                    })
+                    
+                    socketio.emit('task_output', {
+                        'task_id': str(task_id),
+                        'output': f'❌ TASK TIMEOUT: Execution exceeded {TASK_TIMEOUT} seconds (5 minutes) and was automatically terminated.'
+                    })
+            
+            return  # Exit the function early due to timeout
         
         # Get any remaining stderr
         stderr_output = process.stderr.read()

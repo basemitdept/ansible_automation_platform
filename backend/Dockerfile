@@ -2,13 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies including SSH server
+# Install system dependencies including SSH server and build tools
 RUN apt-get update && apt-get install -y \
     openssh-client \
     openssh-server \
     sshpass \
     rsync \
     sudo \
+    gcc \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure SSH server for localhost access
