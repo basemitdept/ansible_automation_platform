@@ -265,7 +265,9 @@ const PlaybookEditor = () => {
       }
       
     } catch (error) {
-      message.error('Failed to execute playbook');
+      console.error('Execution error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to execute playbook';
+      message.error(`Failed to execute playbook: ${errorMessage}`);
     } finally {
       setExecuting(false);
     }
@@ -300,7 +302,9 @@ const PlaybookEditor = () => {
       }
       
     } catch (error) {
-      message.error('Failed to execute playbook');
+      console.error('Execution error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to execute playbook';
+      message.error(`Failed to execute playbook: ${errorMessage}`);
     } finally {
       setExecuting(false);
     }
@@ -337,7 +341,9 @@ const PlaybookEditor = () => {
       }
       
     } catch (error) {
-      message.error('Failed to execute playbook');
+      console.error('Execution error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to execute playbook';
+      message.error(`Failed to execute playbook: ${errorMessage}`);
     } finally {
       setExecuting(false);
     }

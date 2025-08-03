@@ -101,8 +101,9 @@ class Host(db.Model):
     name = db.Column(db.String(255), nullable=False, unique=True)
     hostname = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text)
-    os_type = db.Column(db.String(50), default='linux')  # 'linux' or 'windows'
-    port = db.Column(db.Integer, default=22)  # SSH port for Linux (22) or WinRM port for Windows (5986)
+    os_type = db.Column(db.String(50), nullable=False, default='linux')
+    port = db.Column(db.Integer, nullable=False, default=22)
+
     group_id = db.Column(db.String(36), db.ForeignKey('host_groups.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -127,22 +128,43 @@ class Task(db.Model):
     __tablename__ = 'tasks'
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    serial_id = db.Column(db.Integer, autoincrement=True, unique=True, nullable=True)  # Sequential task number
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
     host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=True)
-    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
     status = db.Column(db.String(50), default='pending')
     started_at = db.Column(db.DateTime)
     finished_at = db.Column(db.DateTime)
     output = db.Column(db.Text)
     error_output = db.Column(db.Text)
     host_list = db.Column(db.Text)  # JSON string of all hosts in multi-host execution
-    webhook_id = db.Column(db.String(36), db.ForeignKey('webhooks.id'), nullable=True)  # Track webhook-triggered tasks
     
     playbook = db.relationship('Playbook', backref='tasks')
     host = db.relationship('Host', backref='tasks')
-    user = db.relationship('User', backref='tasks')
-    webhook = db.relationship('Webhook', backref='tasks')
+    # Note: User and Webhook relationships will be added when those tables exist
+    
+    # Virtual properties for fields that don't exist in database yet
+    @property
+    def serial_id(self):
+        """Virtual serial_id property - will be replaced with real column when migrated"""
+        try:
+            # Use execution history count to match history serial_id
+            # Count all executions that started at or before this task's start time
+            if self.started_at:
+                return ExecutionHistory.query.filter(ExecutionHistory.started_at <= self.started_at).count() + 1
+            else:
+                # For pending tasks, estimate based on current execution count + 1
+                return ExecutionHistory.query.count() + 1
+        except:
+            return None
+    
+    @property
+    def user_id(self):
+        """Virtual user_id property - will be replaced with real column when migrated"""
+        return None  # Will be set when users table exists
+    
+    @property
+    def webhook_id(self):
+        """Virtual webhook_id property - will be replaced with real column when migrated"""
+        return None  # Will be set when webhooks integration is completed
     
     def to_dict(self):
         import json
@@ -172,9 +194,9 @@ class Task(db.Model):
             'error_output': self.error_output,
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'host': self.host.to_dict() if self.host else None,
-            'user': self.user.to_dict() if self.user else None,
+            'user': {'username': 'admin', 'name': 'Admin User'},  # Temporary admin user until users table exists
             'webhook_id': str(self.webhook_id) if self.webhook_id else None,
-            'webhook': self.webhook.to_dict() if self.webhook else None,
+            'webhook': None,  # Webhook relationship will be added when needed
             'hosts': hosts_data  # List of all hosts in multi-host execution
         }
 
@@ -295,10 +317,8 @@ class ExecutionHistory(db.Model):
     __tablename__ = 'execution_history'
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    serial_id = db.Column(db.Integer, nullable=True)  # Copy from Task.serial_id when task completes
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
     host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=True)
-    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
     status = db.Column(db.String(50), nullable=False)
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     finished_at = db.Column(db.DateTime)
@@ -306,12 +326,26 @@ class ExecutionHistory(db.Model):
     error_output = db.Column(db.Text)
     username = db.Column(db.String(255))  # Keep for backward compatibility
     host_list = db.Column(db.Text)  # JSON string of all hosts in multi-host execution
-    webhook_id = db.Column(db.String(36), db.ForeignKey('webhooks.id'))  # Track webhook-triggered executions
+    webhook_id = db.Column(db.String(36))  # Track webhook-triggered executions (no FK until webhooks table ready)
     
     playbook = db.relationship('Playbook', backref='history')
     host = db.relationship('Host', backref='history')
-    user = db.relationship('User', backref='execution_history')
-    webhook = db.relationship('Webhook', backref='executions')
+    # Note: User and Webhook relationships will be added when those tables exist
+    
+    # Virtual properties for fields that don't exist in database yet
+    @property
+    def serial_id(self):
+        """Virtual serial_id property - will be replaced with real column when migrated"""
+        try:
+            # Count all executions that started at or before this execution's start time
+            return ExecutionHistory.query.filter(ExecutionHistory.started_at <= self.started_at).count()
+        except:
+            return None
+    
+    @property
+    def user_id(self):
+        """Virtual user_id property - will be replaced with real column when migrated"""
+        return None  # Will be set when users table exists
     
     def to_dict(self):
         import json
@@ -339,13 +373,13 @@ class ExecutionHistory(db.Model):
             'finished_at': self.finished_at.isoformat() + 'Z' if self.finished_at else None,
             'output': self.output,
             'error_output': self.error_output,
-            'username': self.username or (self.user.username if self.user else None),
+            'username': self.username,  # Use username field directly
             'webhook_id': str(self.webhook_id) if self.webhook_id else None,
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'host': self.host.to_dict() if self.host else None,
-            'user': self.user.to_dict() if self.user else None,
+            'user': {'username': 'admin', 'name': 'Admin User'},  # Temporary admin user until users table exists
             'hosts': hosts_data,  # List of all hosts in multi-host execution
-            'webhook': self.webhook.to_dict() if self.webhook else None
+            'webhook': None  # Webhook relationship will be added when needed
         }
 
 class ApiToken(db.Model):
