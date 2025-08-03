@@ -2,12 +2,14 @@
 -- This script should be run after the main database tables are created
 
 -- Insert localhost host
-INSERT INTO hosts (id, name, hostname, description, created_at, updated_at) 
+INSERT INTO hosts (id, name, hostname, description, os_type, port, created_at, updated_at) 
 VALUES (
     gen_random_uuid()::text,
     'localhost',
     'localhost',
     'Local container for running Ansible tasks within the backend container',
+    'linux',
+    22,
     CURRENT_TIMESTAMP,
     CURRENT_TIMESTAMP
 ) ON CONFLICT (hostname) DO NOTHING;

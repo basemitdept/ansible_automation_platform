@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS hosts (
     name VARCHAR(255) NOT NULL UNIQUE,
     hostname VARCHAR(255) NOT NULL,
     description TEXT,
+    os_type VARCHAR(50) NOT NULL DEFAULT 'linux',
+    port INTEGER NOT NULL DEFAULT 22,
     group_id VARCHAR(36) REFERENCES host_groups(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -83,6 +85,9 @@ CREATE TABLE IF NOT EXISTS webhooks (
 ALTER TABLE execution_history ADD CONSTRAINT fk_execution_history_webhook 
     FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE SET NULL;
 
+-- Add check constraint for os_type
+ALTER TABLE hosts ADD CONSTRAINT chk_hosts_os_type CHECK (os_type IN ('linux', 'windows'));
+
 -- Create artifacts table
 CREATE TABLE IF NOT EXISTS artifacts (
     id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -100,6 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_playbooks_name ON playbooks(name);
 CREATE INDEX IF NOT EXISTS idx_hosts_name ON hosts(name);
 CREATE INDEX IF NOT EXISTS idx_hosts_hostname ON hosts(hostname);
 CREATE INDEX IF NOT EXISTS idx_hosts_group_id ON hosts(group_id);
+CREATE INDEX IF NOT EXISTS idx_hosts_os_type ON hosts(os_type);
 CREATE INDEX IF NOT EXISTS idx_host_groups_name ON host_groups(name);
 CREATE INDEX IF NOT EXISTS idx_tasks_playbook_id ON tasks(playbook_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_host_id ON tasks(host_id);
@@ -174,6 +180,8 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 COMMENT ON COLUMN hosts.group_id IS 'Foreign key to host_groups table';
+COMMENT ON COLUMN hosts.os_type IS 'Operating system type: linux or windows';
+COMMENT ON COLUMN hosts.port IS 'Connection port: 22 for SSH (Linux), 5986 for WinRM (Windows)';
 COMMENT ON COLUMN tasks.host_list IS 'JSON array of all hosts in multi-host execution';
 COMMENT ON COLUMN execution_history.host_list IS 'JSON array of all hosts in multi-host execution';
 COMMENT ON COLUMN webhooks.host_ids IS 'JSON array of host IDs for webhook execution';
