@@ -634,11 +634,127 @@ def download_playbook_file(playbook_id, file_id):
         mimetype=playbook_file.mime_type
     )
 
+# Migration endpoint to add missing columns
+@app.route('/api/migrate-hosts', methods=['POST'])
+def migrate_hosts():
+    try:
+        # Check if os_type and port columns exist
+        column_check = db.session.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'hosts' 
+            AND column_name IN ('os_type', 'port')
+        """))
+        existing_columns = {row[0] for row in column_check}
+        
+        has_os_type = 'os_type' in existing_columns
+        has_port = 'port' in existing_columns
+        
+        changes = []
+        
+        # Add os_type column if missing
+        if not has_os_type:
+            try:
+                db.session.execute(text("ALTER TABLE hosts ADD COLUMN os_type VARCHAR(50) DEFAULT 'linux'"))
+                changes.append("Added os_type column")
+            except Exception as e:
+                changes.append(f"Failed to add os_type column: {e}")
+        else:
+            changes.append("os_type column already exists")
+        
+        # Add port column if missing
+        if not has_port:
+            try:
+                db.session.execute(text("ALTER TABLE hosts ADD COLUMN port INTEGER DEFAULT 22"))
+                changes.append("Added port column")
+            except Exception as e:
+                changes.append(f"Failed to add port column: {e}")
+        else:
+            changes.append("port column already exists")
+        
+        # Commit changes
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'success',
+            'changes': changes,
+            'timestamp': datetime.utcnow().isoformat() + 'Z'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat() + 'Z'
+        }), 500
+
+# Health check endpoint for debugging
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    try:
+        # Test database connection
+        db.session.execute(text('SELECT 1'))
+        
+        # Check database schema
+        column_check = db.session.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'hosts'
+            ORDER BY column_name
+        """))
+        all_host_columns = [row[0] for row in column_check]
+        
+        # Check specifically for our columns
+        schema_check = db.session.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'hosts' 
+            AND column_name IN ('os_type', 'port')
+        """))
+        existing_columns = {row[0] for row in schema_check}
+        
+        # Test model access
+        host_groups_count = HostGroup.query.count()
+        
+        # Get hosts using our safe method
+        hosts_result = db.session.execute(text("SELECT id, name, hostname FROM hosts LIMIT 3"))
+        sample_hosts = [{'id': row.id, 'name': row.name, 'hostname': row.hostname} for row in hosts_result]
+        
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'host_groups_count': host_groups_count,
+            'hosts_sample': sample_hosts,
+            'schema_info': {
+                'all_host_columns': all_host_columns,
+                'has_os_type': 'os_type' in existing_columns,
+                'has_port': 'port' in existing_columns,
+                'missing_columns': ['os_type', 'port'] if not existing_columns else [col for col in ['os_type', 'port'] if col not in existing_columns]
+            },
+            'timestamp': datetime.utcnow().isoformat() + 'Z'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat() + 'Z'
+        }), 500
+
 # Host Group routes
 @app.route('/api/host-groups', methods=['GET'])
 def get_host_groups():
-    groups = HostGroup.query.all()
-    return jsonify([group.to_dict() for group in groups])
+    try:
+        # Test database connection first
+        db.session.execute(text('SELECT 1'))
+        groups = HostGroup.query.all()
+        result = [group.to_dict() for group in groups]
+        print(f"Successfully fetched {len(result)} host groups")
+        return jsonify(result)
+    except Exception as e:
+        print(f"Error fetching host groups: {str(e)}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to fetch host groups', 'details': str(e)}), 500
 
 @app.route('/api/host-groups', methods=['POST'])
 def create_host_group():
@@ -690,28 +806,134 @@ def delete_host_group(group_id):
 # Host routes
 @app.route('/api/hosts', methods=['GET'])
 def get_hosts():
-    hosts = Host.query.all()
-    return jsonify([host.to_dict() for host in hosts])
+    try:
+        # Test database connection first
+        db.session.execute(text('SELECT 1'))
+        
+        # Simple query with basic columns only
+        query = "SELECT id, name, hostname, description, group_id, created_at, updated_at FROM hosts"
+        result_rows = db.session.execute(text(query))
+        
+        hosts = []
+        for row in result_rows:
+            # Parse OS info from description if it exists
+            description = row.description or ''
+            os_type = 'linux'
+            port = 22
+            
+            # Extract OS info from description
+            if 'Windows host (WinRM port' in description:
+                os_type = 'windows'
+                # Try to extract port number
+                import re
+                port_match = re.search(r'port (\d+)', description)
+                if port_match:
+                    port = int(port_match.group(1))
+                else:
+                    port = 5986
+            elif 'Linux host (SSH port' in description:
+                os_type = 'linux'
+                # Try to extract port number  
+                import re
+                port_match = re.search(r'port (\d+)', description)
+                if port_match:
+                    port = int(port_match.group(1))
+                else:
+                    port = 22
+            
+            host_data = {
+                'id': str(row.id),
+                'name': row.name,
+                'hostname': row.hostname,
+                'description': description,
+                'group_id': str(row.group_id) if row.group_id else None,
+                'created_at': row.created_at.isoformat() + 'Z' if row.created_at else None,
+                'updated_at': row.updated_at.isoformat() + 'Z' if row.updated_at else None,
+                'os_type': os_type,
+                'port': port,
+                'group': None
+            }
+            
+            # Get group info if group_id exists
+            if row.group_id:
+                try:
+                    group = HostGroup.query.get(row.group_id)
+                    if group:
+                        host_data['group'] = {
+                            'id': str(group.id),
+                            'name': group.name,
+                            'color': group.color,
+                            'description': group.description
+                        }
+                except Exception as group_error:
+                    print(f"Error fetching group for host {row.id}: {str(group_error)}")
+            
+            hosts.append(host_data)
+        
+        print(f"Successfully fetched {len(hosts)} hosts")
+        return jsonify(hosts)
+        
+    except Exception as e:
+        print(f"Error fetching hosts: {str(e)}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to fetch hosts', 'details': str(e)}), 500
 
 @app.route('/api/hosts', methods=['POST'])
 def create_host():
     data = request.json
-    
-    host = Host(
-        name=data['name'],
-        hostname=data['hostname'],
-        description=data.get('description', ''),
-        os_type=data.get('os_type', 'linux'),
-        port=data.get('port', 22),
-        group_id=data.get('group_id')
-    )
+    print(f"Creating host with data: {data}")
     
     try:
-        db.session.add(host)
+        # Generate UUID for new host
+        host_id = str(uuid.uuid4())
+        
+        # Use basic columns that always exist - store OS info in description if needed
+        description = data.get('description', '')
+        os_type = data.get('os_type', 'linux')
+        port = data.get('port', 22)
+        
+        # If user didn't provide description, create one with OS info
+        if not description and os_type == 'windows':
+            description = f"Windows host (WinRM port {port})"
+        elif not description and os_type == 'linux':
+            description = f"Linux host (SSH port {port})"
+        
+        # Simple insert with only guaranteed columns
+        query = """
+            INSERT INTO hosts (id, name, hostname, description, group_id) 
+            VALUES (:id, :name, :hostname, :description, :group_id)
+        """
+        
+        params = {
+            'id': host_id,
+            'name': data['name'],
+            'hostname': data['hostname'],
+            'description': description,
+            'group_id': data.get('group_id')
+        }
+        
+        db.session.execute(text(query), params)
         db.session.commit()
-        return jsonify(host.to_dict()), 201
+        
+        # Return the created host data with the OS info
+        result = {
+            'id': host_id,
+            'name': data['name'],
+            'hostname': data['hostname'],
+            'description': description,
+            'group_id': data.get('group_id'),
+            'os_type': os_type,
+            'port': port,
+            'group': None,
+            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'updated_at': datetime.utcnow().isoformat() + 'Z'
+        }
+        
+        return jsonify(result), 201
+        
     except Exception as e:
         db.session.rollback()
+        print(f"Error creating host: {str(e)}")
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/hosts/bulk', methods=['POST'])
@@ -768,22 +990,80 @@ def create_hosts_bulk():
 
 @app.route('/api/hosts/<host_id>', methods=['PUT'])
 def update_host(host_id):
-    host = Host.query.get_or_404(host_id)
     data = request.json
-    
-    host.name = data['name']
-    host.hostname = data['hostname']
-    host.description = data.get('description', '')
-    host.os_type = data.get('os_type', host.os_type)
-    host.port = data.get('port', host.port)
-    host.group_id = data.get('group_id', host.group_id)
-    host.updated_at = datetime.utcnow()
+    print(f"Updating host {host_id} with data: {data}")
     
     try:
+        # Get OS info from the request
+        description = data.get('description', '')
+        os_type = data.get('os_type', 'linux')
+        port = data.get('port', 22)
+        
+        # If user didn't provide description, create one with OS info
+        if not description and os_type == 'windows':
+            description = f"Windows host (WinRM port {port})"
+        elif not description and os_type == 'linux':
+            description = f"Linux host (SSH port {port})"
+        
+        # Update using raw SQL to avoid column issues
+        query = """
+            UPDATE hosts 
+            SET name = :name, 
+                hostname = :hostname, 
+                description = :description, 
+                group_id = :group_id,
+                updated_at = :updated_at
+            WHERE id = :host_id
+        """
+        
+        params = {
+            'name': data['name'],
+            'hostname': data['hostname'],
+            'description': description,
+            'group_id': data.get('group_id'),
+            'updated_at': datetime.utcnow(),
+            'host_id': host_id
+        }
+        
+        result = db.session.execute(text(query), params)
+        
+        if result.rowcount == 0:
+            return jsonify({'error': 'Host not found'}), 404
+            
         db.session.commit()
-        return jsonify(host.to_dict())
+        
+        # Return the updated host data
+        response_data = {
+            'id': host_id,
+            'name': data['name'],
+            'hostname': data['hostname'],
+            'description': description,
+            'group_id': data.get('group_id'),
+            'os_type': os_type,
+            'port': port,
+            'group': None,
+            'updated_at': datetime.utcnow().isoformat() + 'Z'
+        }
+        
+        # Get group info if group_id exists
+        if data.get('group_id'):
+            try:
+                group = HostGroup.query.get(data.get('group_id'))
+                if group:
+                    response_data['group'] = {
+                        'id': str(group.id),
+                        'name': group.name,
+                        'color': group.color,
+                        'description': group.description
+                    }
+            except Exception as group_error:
+                print(f"Error fetching group: {str(group_error)}")
+        
+        return jsonify(response_data)
+        
     except Exception as e:
         db.session.rollback()
+        print(f"Error updating host: {str(e)}")
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/hosts/<host_id>', methods=['DELETE'])

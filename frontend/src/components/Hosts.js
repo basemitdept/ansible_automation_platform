@@ -68,7 +68,9 @@ const Hosts = () => {
       setHosts(response.data);
       applyFilters(response.data);
     } catch (error) {
-      message.error('Failed to fetch hosts');
+      console.error('Failed to fetch hosts:', error);
+      const errorMessage = error.response?.data?.details || error.response?.data?.error || error.message || 'Failed to fetch hosts';
+      message.error(`Failed to fetch hosts: ${errorMessage}`);
     } finally {
       setLoading(false);
     }
@@ -79,7 +81,9 @@ const Hosts = () => {
       const response = await hostGroupsAPI.getAll();
       setHostGroups(response.data);
     } catch (error) {
-      message.error('Failed to fetch host groups');
+      console.error('Failed to fetch host groups:', error);
+      const errorMessage = error.response?.data?.details || error.response?.data?.error || error.message || 'Failed to fetch host groups';
+      message.error(`Failed to fetch host groups: ${errorMessage}`);
     }
   };
 
@@ -168,16 +172,26 @@ const Hosts = () => {
 
   const handleSubmit = async (values) => {
     try {
+      console.log('=== HOST SUBMISSION DEBUG ===');
+      console.log('Form values being submitted:', JSON.stringify(values, null, 2));
+      console.log('OS Type:', values.os_type);
+      console.log('Port:', values.port);
+      console.log('=== END DEBUG ===');
+      
       if (editingHost) {
-        await hostsAPI.update(editingHost.id, values);
+        const response = await hostsAPI.update(editingHost.id, values);
+        console.log('Update response:', response.data);
         message.success('Host updated successfully');
       } else {
-        await hostsAPI.create(values);
+        const response = await hostsAPI.create(values);
+        console.log('Create response:', response.data);
         message.success('Host created successfully');
       }
       setModalVisible(false);
       fetchHosts();
     } catch (error) {
+      console.error('Error submitting host:', error);
+      console.error('Error details:', error.response?.data);
       message.error(`Failed to ${editingHost ? 'update' : 'create'} host`);
     }
   };
@@ -517,7 +531,11 @@ const Hosts = () => {
           </Space>
         }
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          setModalVisible(false);
+          form.resetFields();
+          setEditingHost(null);
+        }}
         footer={null}
       >
         <Form

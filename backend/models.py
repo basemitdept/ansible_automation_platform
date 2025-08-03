@@ -84,15 +84,32 @@ class HostGroup(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def to_dict(self):
-        return {
-            'id': str(self.id),
-            'name': self.name,
-            'description': self.description,
-            'color': self.color,
-            'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() + 'Z' if self.updated_at else None,
-            'host_count': len(self.hosts) if hasattr(self, 'hosts') else 0
-        }
+        try:
+            host_count = 0
+            if hasattr(self, 'hosts') and self.hosts:
+                host_count = len(self.hosts)
+            
+            return {
+                'id': str(self.id),
+                'name': self.name,
+                'description': self.description,
+                'color': self.color,
+                'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
+                'updated_at': self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+                'host_count': host_count
+            }
+        except Exception as e:
+            print(f"Error in HostGroup.to_dict(): {str(e)}")
+            # Return minimal data if there's an error
+            return {
+                'id': str(self.id) if self.id else None,
+                'name': self.name if hasattr(self, 'name') else 'Unknown',
+                'description': self.description if hasattr(self, 'description') else '',
+                'color': self.color if hasattr(self, 'color') else '#1890ff',
+                'created_at': None,
+                'updated_at': None,
+                'host_count': 0
+            }
 
 class Host(db.Model):
     __tablename__ = 'hosts'
@@ -101,28 +118,58 @@ class Host(db.Model):
     name = db.Column(db.String(255), nullable=False, unique=True)
     hostname = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text)
-    os_type = db.Column(db.String(50), nullable=False, default='linux')
-    port = db.Column(db.Integer, nullable=False, default=22)
-
     group_id = db.Column(db.String(36), db.ForeignKey('host_groups.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # These columns might not exist initially, so we'll handle them dynamically
+    # os_type = db.Column(db.String(50), nullable=False, default='linux')
+    # port = db.Column(db.Integer, nullable=False, default=22)
+    
     group = db.relationship('HostGroup', backref='hosts')
     
     def to_dict(self):
-        return {
-            'id': str(self.id),
-            'name': self.name,
-            'hostname': self.hostname,
-            'description': self.description,
-            'os_type': self.os_type,
-            'port': self.port,
-            'group_id': str(self.group_id) if self.group_id else None,
-            'group': self.group.to_dict() if self.group else None,
-            'created_at': self.created_at.isoformat() + 'Z',
-            'updated_at': self.updated_at.isoformat() + 'Z'
-        }
+        try:
+            group_data = None
+            if self.group:
+                try:
+                    group_data = {
+                        'id': str(self.group.id),
+                        'name': self.group.name,
+                        'color': self.group.color,
+                        'description': self.group.description
+                    }
+                except Exception as group_error:
+                    print(f"Error serializing group for host {self.id}: {str(group_error)}")
+                    group_data = None
+            
+            return {
+                'id': str(self.id),
+                'name': self.name,
+                'hostname': self.hostname,
+                'description': self.description,
+                'os_type': self.os_type,
+                'port': self.port,
+                'group_id': str(self.group_id) if self.group_id else None,
+                'group': group_data,
+                'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
+                'updated_at': self.updated_at.isoformat() + 'Z' if self.updated_at else None
+            }
+        except Exception as e:
+            print(f"Error in Host.to_dict(): {str(e)}")
+            # Return minimal data if there's an error
+            return {
+                'id': str(self.id) if self.id else None,
+                'name': self.name if hasattr(self, 'name') else 'Unknown',
+                'hostname': self.hostname if hasattr(self, 'hostname') else 'Unknown',
+                'description': self.description if hasattr(self, 'description') else '',
+                'os_type': self.os_type if hasattr(self, 'os_type') else 'linux',
+                'port': self.port if hasattr(self, 'port') else 22,
+                'group_id': None,
+                'group': None,
+                'created_at': None,
+                'updated_at': None
+            }
 
 class Task(db.Model):
     __tablename__ = 'tasks'
