@@ -990,80 +990,22 @@ def create_hosts_bulk():
 
 @app.route('/api/hosts/<host_id>', methods=['PUT'])
 def update_host(host_id):
+    host = Host.query.get_or_404(host_id)
     data = request.json
-    print(f"Updating host {host_id} with data: {data}")
+    
+    host.name = data['name']
+    host.hostname = data['hostname']
+    host.description = data.get('description', '')
+    host.os_type = data.get('os_type', host.os_type)
+    host.port = data.get('port', host.port)
+    host.group_id = data.get('group_id', host.group_id)
+    host.updated_at = datetime.utcnow()
     
     try:
-        # Get OS info from the request
-        description = data.get('description', '')
-        os_type = data.get('os_type', 'linux')
-        port = data.get('port', 22)
-        
-        # If user didn't provide description, create one with OS info
-        if not description and os_type == 'windows':
-            description = f"Windows host (WinRM port {port})"
-        elif not description and os_type == 'linux':
-            description = f"Linux host (SSH port {port})"
-        
-        # Update using raw SQL to avoid column issues
-        query = """
-            UPDATE hosts 
-            SET name = :name, 
-                hostname = :hostname, 
-                description = :description, 
-                group_id = :group_id,
-                updated_at = :updated_at
-            WHERE id = :host_id
-        """
-        
-        params = {
-            'name': data['name'],
-            'hostname': data['hostname'],
-            'description': description,
-            'group_id': data.get('group_id'),
-            'updated_at': datetime.utcnow(),
-            'host_id': host_id
-        }
-        
-        result = db.session.execute(text(query), params)
-        
-        if result.rowcount == 0:
-            return jsonify({'error': 'Host not found'}), 404
-            
         db.session.commit()
-        
-        # Return the updated host data
-        response_data = {
-            'id': host_id,
-            'name': data['name'],
-            'hostname': data['hostname'],
-            'description': description,
-            'group_id': data.get('group_id'),
-            'os_type': os_type,
-            'port': port,
-            'group': None,
-            'updated_at': datetime.utcnow().isoformat() + 'Z'
-        }
-        
-        # Get group info if group_id exists
-        if data.get('group_id'):
-            try:
-                group = HostGroup.query.get(data.get('group_id'))
-                if group:
-                    response_data['group'] = {
-                        'id': str(group.id),
-                        'name': group.name,
-                        'color': group.color,
-                        'description': group.description
-                    }
-            except Exception as group_error:
-                print(f"Error fetching group: {str(group_error)}")
-        
-        return jsonify(response_data)
-        
+        return jsonify(host.to_dict())
     except Exception as e:
         db.session.rollback()
-        print(f"Error updating host: {str(e)}")
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/hosts/<host_id>', methods=['DELETE'])
@@ -1754,7 +1696,9 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
             linux_hosts = []
             
             for host in hosts:
-                if getattr(host, 'os_type', 'linux') == 'windows':
+                # Check description to determine OS type since os_type column may not exist
+                description = getattr(host, 'description', '') or ''
+                if 'Windows host (WinRM port' in description:
                     windows_hosts.append(host)
                 else:
                     linux_hosts.append(host)
@@ -1765,9 +1709,17 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 port = getattr(host, 'port', 22)
                 inv_content += f"{host.hostname} ansible_port={port} ansible_connection=ssh\n"
             
-            # Add Windows hosts to targets group (without connection info here)
+            # Add Windows hosts to targets group with WinRM connection
             for host in windows_hosts:
-                inv_content += f"{host.hostname}\n"
+                # Extract port from description or use default
+                description = getattr(host, 'description', '') or ''
+                port = 5986
+                if 'WinRM port' in description:
+                    import re
+                    port_match = re.search(r'port (\d+)', description)
+                    if port_match:
+                        port = int(port_match.group(1))
+                inv_content += f"{host.hostname} ansible_port={port} ansible_connection=winrm ansible_winrm_server_cert_validation=ignore\n"
             
             # Add dynamic IPs from variables if 'ips' or 'hosts' variable is provided
             dynamic_ips = set()
@@ -1875,6 +1827,8 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
             '-e', f'ansible_user={username}',
             '-e', f'ansible_ssh_pass={password}',
             '-e', f'ansible_become_pass={password}',  # Add sudo password
+            '-e', f'ansible_winrm_user={username}',
+            '-e', f'ansible_winrm_password={password}',
             '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password"',
             '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
         ]
@@ -3180,7 +3134,9 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
             linux_hosts = []
             
             for host in hosts:
-                if getattr(host, 'os_type', 'linux') == 'windows':
+                # Check description to determine OS type since os_type column may not exist
+                description = getattr(host, 'description', '') or ''
+                if 'Windows host (WinRM port' in description:
                     windows_hosts.append(host)
                 else:
                     linux_hosts.append(host)
@@ -3191,9 +3147,17 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 port = getattr(host, 'port', 22)
                 inv_content += f"{host.hostname} ansible_port={port} ansible_connection=ssh\n"
             
-            # Add Windows hosts to targets group (without connection info here)
+            # Add Windows hosts to targets group with WinRM connection
             for host in windows_hosts:
-                inv_content += f"{host.hostname}\n"
+                # Extract port from description or use default
+                description = getattr(host, 'description', '') or ''
+                port = 5986
+                if 'WinRM port' in description:
+                    import re
+                    port_match = re.search(r'port (\d+)', description)
+                    if port_match:
+                        port = int(port_match.group(1))
+                inv_content += f"{host.hostname} ansible_port={port} ansible_connection=winrm ansible_winrm_server_cert_validation=ignore\n"
             
             # Add dynamic IPs from variables if 'ips' or 'hosts' variable is provided
             dynamic_ips = set()
