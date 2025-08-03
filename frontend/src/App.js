@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu, theme, ConfigProvider, Switch, Button, Space, Dropdown, Avatar, message } from 'antd';
 import {
+  DashboardOutlined,
   BookOutlined,
   DatabaseOutlined,
   PlayCircleOutlined,
@@ -17,6 +18,7 @@ import {
   SettingOutlined
 } from '@ant-design/icons';
 
+import Dashboard from './components/Dashboard';
 import Playbooks from './components/Playbooks';
 import Hosts from './components/Hosts';
 import PlaybookEditor from './components/PlaybookEditor';
@@ -120,6 +122,11 @@ function App() {
 
   const getMenuItems = () => {
     const items = [
+      {
+        key: '/',
+        icon: <DashboardOutlined />,
+        label: 'Dashboard',
+      },
       {
         key: '/playbooks',
         icon: <BookOutlined />,
@@ -312,7 +319,8 @@ function App() {
             }}
           >
             <Routes>
-              <Route path="/" element={<Playbooks currentUser={currentUser} />} />
+              <Route path="/" element={<Dashboard currentUser={currentUser} />} />
+              <Route path="/dashboard" element={<Dashboard currentUser={currentUser} />} />
               <Route path="/playbooks" element={<Playbooks currentUser={currentUser} />} />
               <Route path="/hosts" element={<Hosts currentUser={currentUser} />} />
               <Route path="/credentials" element={<Credentials currentUser={currentUser} />} />
