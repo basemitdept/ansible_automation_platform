@@ -1387,6 +1387,7 @@ def execute_playbook():
         task = Task(
             playbook_id=playbook_id,
             host_id=primary_host.id,
+            user_id=current_user_id,  # Store the user who created the task
             status='pending',
             host_list=host_list_json
         )
@@ -1402,6 +1403,7 @@ def execute_playbook():
         task = Task(
             playbook_id=playbook_id,
             host_id=None,  # No specific host for dynamic execution
+            user_id=current_user_id,  # Store the user who created the task
             status='pending',
             host_list=host_list_json
         )
@@ -1661,6 +1663,7 @@ def trigger_webhook(webhook_token):
     task = Task(
         playbook_id=playbook.id,
         host_id=primary_host.id,
+        user_id=None,  # Webhook executions don't have a user
         status='pending',
         host_list=host_list_json
     )
@@ -2068,6 +2071,7 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 history = ExecutionHistory(
                     playbook_id=playbook.id,
                     host_id=task.host_id,
+                    user_id=None,  # Webhook executions don't have a user
                     status=final_status,
                     started_at=task.started_at,
                     finished_at=task.finished_at,
@@ -3814,6 +3818,7 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 history = ExecutionHistory(
                     playbook_id=playbook.id,
                     host_id=primary_host_id,  # Use primary host for record (can be None for dynamic executions)
+                    user_id=task.user_id,  # Store the actual user who initiated the task
                     status=overall_status,
                     started_at=task_started_at,
                     finished_at=task_finished_at,
@@ -4083,6 +4088,7 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
                 history = ExecutionHistory(
                     playbook_id=playbook.id,
                     host_id=host.id,
+                    user_id=task.user_id,  # Store the actual user who initiated the task
                     status=task.status,
                     started_at=task.started_at,
                     finished_at=task.finished_at,

@@ -179,6 +179,7 @@ class Task(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
     host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)  # Track who created the task
     status = db.Column(db.String(50), default='pending')
     started_at = db.Column(db.DateTime)
     finished_at = db.Column(db.DateTime)
@@ -188,7 +189,8 @@ class Task(db.Model):
     
     playbook = db.relationship('Playbook', backref='tasks')
     host = db.relationship('Host', backref='tasks')
-    # Note: User and Webhook relationships will be added when those tables exist
+    user = db.relationship('User', backref='tasks')  # User who created the task
+    # Note: Webhook relationships will be added when those tables exist
     
     # Virtual properties for fields that don't exist in database yet
     @property
@@ -205,10 +207,7 @@ class Task(db.Model):
         except:
             return None
     
-    @property
-    def user_id(self):
-        """Virtual user_id property - will be replaced with real column when migrated"""
-        return None  # Will be set when users table exists
+    # user_id is now a real column, no virtual property needed
     
     @property
     def webhook_id(self):
@@ -243,7 +242,7 @@ class Task(db.Model):
             'error_output': self.error_output,
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'host': self.host.to_dict() if self.host else None,
-            'user': {'username': 'admin', 'name': 'Admin User'},  # Temporary admin user until users table exists
+            'user': self.user.to_dict() if self.user else {'username': 'unknown', 'name': 'Unknown User'},
             'webhook_id': str(self.webhook_id) if self.webhook_id else None,
             'webhook': None,  # Webhook relationship will be added when needed
             'hosts': hosts_data  # List of all hosts in multi-host execution
@@ -368,18 +367,20 @@ class ExecutionHistory(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
     host_id = db.Column(db.String(36), db.ForeignKey('hosts.id'), nullable=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)  # Track who executed the task
     status = db.Column(db.String(50), nullable=False)
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     finished_at = db.Column(db.DateTime)
     output = db.Column(db.Text)
     error_output = db.Column(db.Text)
-    username = db.Column(db.String(255))  # Keep for backward compatibility
+    username = db.Column(db.String(255))  # Keep for backward compatibility (SSH username)
     host_list = db.Column(db.Text)  # JSON string of all hosts in multi-host execution
     webhook_id = db.Column(db.String(36))  # Track webhook-triggered executions (no FK until webhooks table ready)
     
     playbook = db.relationship('Playbook', backref='history')
     host = db.relationship('Host', backref='history')
-    # Note: User and Webhook relationships will be added when those tables exist
+    user = db.relationship('User', backref='history')  # User who executed the task
+    # Note: Webhook relationships will be added when those tables exist
     
     # Virtual properties for fields that don't exist in database yet
     @property
@@ -391,10 +392,7 @@ class ExecutionHistory(db.Model):
         except:
             return None
     
-    @property
-    def user_id(self):
-        """Virtual user_id property - will be replaced with real column when migrated"""
-        return None  # Will be set when users table exists
+    # user_id is now a real column, no virtual property needed
     
     def to_dict(self):
         import json
@@ -426,7 +424,7 @@ class ExecutionHistory(db.Model):
             'webhook_id': str(self.webhook_id) if self.webhook_id else None,
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'host': self.host.to_dict() if self.host else None,
-            'user': {'username': 'admin', 'name': 'Admin User'},  # Temporary admin user until users table exists
+            'user': self.user.to_dict() if self.user else ({'username': 'webhook', 'name': 'Webhook Trigger'} if self.webhook_id else {'username': 'unknown', 'name': 'Unknown User'}),
             'hosts': hosts_data,  # List of all hosts in multi-host execution
             'webhook': None  # Webhook relationship will be added when needed
         }

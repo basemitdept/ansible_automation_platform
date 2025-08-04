@@ -1,7 +1,0 @@
----
-- name: Sample Windows playbook
-  hosts: all
-  gather_facts: yes
-  tasks:
-    - name: Ensure a service exists and is running
-      win_command: hostname

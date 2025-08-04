@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Card,
   Row,
@@ -6,13 +6,14 @@ import {
   Statistic,
   Typography,
   Space,
-  Progress,
   Table,
   Tag,
   Timeline,
   Alert,
   Spin,
-  Divider
+  Divider,
+  Button,
+  Tooltip
 } from 'antd';
 import {
   DashboardOutlined,
@@ -25,7 +26,8 @@ import {
   ApiOutlined,
   GroupOutlined,
   FileTextOutlined,
-  HistoryOutlined
+  HistoryOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
 import { tasksAPI, historyAPI, hostsAPI, hostGroupsAPI, playbooksAPI, usersAPI } from '../services/api';
 import moment from 'moment';
@@ -34,6 +36,7 @@ const { Title, Text } = Typography;
 
 const Dashboard = () => {
   const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState(null);
   const [stats, setStats] = useState({
     tasks: { total: 0, running: 0, pending: 0, completed: 0, failed: 0 },
     hosts: { total: 0, linux: 0, windows: 0 },
@@ -44,11 +47,10 @@ const Dashboard = () => {
     recentHistory: []
   });
 
-  useEffect(() => {
-    fetchDashboardData();
-  }, []);
+  // No auto-refresh - only manual refresh available
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
+    // Fetching dashboard data
     setLoading(true);
     try {
       const [tasksRes, historyRes, hostsRes, groupsRes, playbooksRes, usersRes] = await Promise.all([
@@ -68,9 +70,7 @@ const Dashboard = () => {
       const users = usersRes.data || [];
 
       // Calculate task statistics
-      console.log('Debug - Tasks:', tasks.length, 'History:', history.length);
-      console.log('Debug - Task statuses:', tasks.map(t => t.status));
-      console.log('Debug - History statuses:', history.map(h => h.status));
+      // Task and history data loaded
       
       // Count active tasks (running/pending)
       const activeTasks = {
@@ -126,12 +126,30 @@ const Dashboard = () => {
         recentTasks,
         recentHistory
       });
+      setLastRefresh(new Date());
+      // Dashboard data updated successfully
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
       setLoading(false);
     }
+  }, []); // No dependencies needed
+
+  const handleManualRefresh = () => {
+    fetchDashboardData();
   };
+
+  // Auto-refresh toggle removed - only manual refresh available
+
+  // Initial data fetch
+  useEffect(() => {
+    // Dashboard component mounted, fetching initial data
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // Auto-refresh is disabled - only manual refresh available
+
+  // No auto-refresh - data loads once on mount
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -218,13 +236,32 @@ const Dashboard = () => {
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <Title level={2}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+          <div>
+            <Title level={2}>
+              <Space>
+                <DashboardOutlined />
+                Dashboard
+              </Space>
+            </Title>
+            <Text type="secondary">System overview and statistics</Text>
+          </div>
           <Space>
-            <DashboardOutlined />
-            Dashboard
+            <Tooltip title={lastRefresh ? `Last updated: ${moment(lastRefresh).format('HH:mm:ss')}` : 'Not loaded yet'}>
+              <Text type="secondary" style={{ fontSize: '12px' }}>
+                {lastRefresh ? `Updated ${moment(lastRefresh).fromNow()}` : 'Loading...'}
+              </Text>
+            </Tooltip>
+            <Tooltip title="Manual refresh">
+              <Button 
+                icon={<ReloadOutlined />} 
+                onClick={handleManualRefresh}
+                loading={loading}
+                size="small"
+              />
+            </Tooltip>
           </Space>
-        </Title>
-        <Text type="secondary">System overview and statistics</Text>
+        </div>
       </div>
 
       {/* Key Metrics */}
@@ -355,39 +392,7 @@ const Dashboard = () => {
         </Col>
       </Row>
 
-      {/* Progress Indicators */}
-      {stats.tasks.total > 0 && (
-        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-          <Col xs={24}>
-            <Card title="Task Progress Overview">
-              <Row gutter={[16, 16]}>
-                <Col xs={24} md={8}>
-                  <Text strong>Success Rate</Text>
-                  <Progress
-                    percent={successRate}
-                    status={successRate > 80 ? 'success' : successRate > 60 ? 'normal' : 'exception'}
-                    strokeColor={successRate > 80 ? '#52c41a' : successRate > 60 ? '#faad14' : '#ff4d4f'}
-                  />
-                </Col>
-                <Col xs={24} md={8}>
-                  <Text strong>Completion Rate</Text>
-                  <Progress
-                    percent={Math.round(((stats.tasks.completed + stats.tasks.failed) / stats.tasks.total) * 100)}
-                    status="normal"
-                  />
-                </Col>
-                <Col xs={24} md={8}>
-                  <Text strong>System Load</Text>
-                  <Progress
-                    percent={Math.round((stats.tasks.running / Math.max(stats.tasks.total, 1)) * 100)}
-                    status={stats.tasks.running > stats.tasks.total * 0.5 ? 'exception' : 'normal'}
-                  />
-                </Col>
-              </Row>
-            </Card>
-          </Col>
-        </Row>
-      )}
+
 
       {/* Recent Activity */}
       <Row gutter={[16, 16]}>

@@ -1,9 +1,0 @@
----
-- name: Sample playbook
-  hosts: "{{ips}}"
-  become: yes
-  tasks:
-    - name: Update system packages
-      copy: 
-        src: test.sh 
-        dest: /tmp
