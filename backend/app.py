@@ -58,6 +58,52 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def create_ansible_user_if_needed():
+    """Create ansible_user role if it doesn't exist (for app startup)"""
+    try:
+        import psycopg2
+        
+        # Connect as postgres superuser to create the ansible_user
+        postgres_url = "postgresql://postgres:postgres_password@postgres:5432/ansible_automation"
+        
+        print("Connecting as postgres to create ansible_user...")
+        conn = psycopg2.connect(postgres_url)
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = 'ansible_user'")
+        user_exists = cursor.fetchone() is not None
+        
+        if not user_exists:
+            print("Creating ansible_user role during app startup...")
+            
+            # Create the user
+            cursor.execute("CREATE USER ansible_user WITH PASSWORD 'ansible_password'")
+            
+            # Grant privileges
+            cursor.execute("GRANT ALL PRIVILEGES ON DATABASE ansible_automation TO ansible_user")
+            cursor.execute("GRANT ALL ON SCHEMA public TO ansible_user")
+            cursor.execute("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ansible_user")
+            cursor.execute("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ansible_user")
+            cursor.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ansible_user")
+            cursor.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ansible_user")
+            
+            print("✅ ansible_user role created during app startup")
+        else:
+            print("ℹ️ ansible_user role already exists")
+            
+        cursor.close()
+        conn.close()
+            
+    except Exception as e:
+        print(f"⚠️ Warning: Could not create ansible_user during startup: {e}")
+        try:
+            cursor.close()
+            conn.close()
+        except:
+            pass
+
 def init_database():
     """Initialize database with retry logic"""
     max_retries = 30
@@ -69,6 +115,14 @@ def init_database():
                 # Test connection first
                 with db.engine.connect() as connection:
                     connection.execute(text('SELECT 1'))
+                
+                # Create ansible_user role if needed (fallback if startup script didn't work)
+                try:
+                    create_ansible_user_if_needed()
+                except Exception as user_creation_error:
+                    print(f"⚠️ User creation fallback failed: {user_creation_error}")
+                    # Continue anyway - maybe the user already exists
+                
                 # Create tables
                 db.create_all()
                 print("Database tables created successfully!")
@@ -389,34 +443,81 @@ def get_playbooks():
 
 @app.route('/api/playbooks', methods=['POST'])
 def create_playbook():
-    data = request.json
-    
-    # Save playbook content to file
-    playbook_file = os.path.join(PLAYBOOKS_DIR, f"{data['name']}.yml")
-    os.makedirs(PLAYBOOKS_DIR, exist_ok=True)
-    
-    with open(playbook_file, 'w') as f:
-        f.write(data['content'])
-    
-    # Handle variables - convert to JSON string if provided
-    variables_json = None
-    if 'variables' in data and data['variables']:
-        variables_json = json.dumps(data['variables'])
-    
-    playbook = Playbook(
-        name=data['name'],
-        content=data['content'],
-        description=data.get('description', ''),
-        variables=variables_json
-    )
-    
     try:
-        db.session.add(playbook)
-        db.session.commit()
-        return jsonify(playbook.to_dict()), 201
+        data = request.json
+        print(f"📝 Creating playbook with data: {data}")
+        
+        # Validate required fields
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        if not data.get('name'):
+            return jsonify({'error': 'Playbook name is required'}), 400
+            
+        if not data.get('content'):
+            return jsonify({'error': 'Playbook content is required'}), 400
+        
+        # Check if playbook with same name already exists
+        existing_playbook = Playbook.query.filter_by(name=data['name']).first()
+        if existing_playbook:
+            return jsonify({'error': f'Playbook with name "{data["name"]}" already exists'}), 400
+        
+        # Save playbook content to file
+        try:
+            playbook_file = os.path.join(PLAYBOOKS_DIR, f"{data['name']}.yml")
+            os.makedirs(PLAYBOOKS_DIR, exist_ok=True)
+            print(f"📁 Saving playbook file to: {playbook_file}")
+            
+            with open(playbook_file, 'w') as f:
+                f.write(data['content'])
+            print(f"✅ Playbook file saved successfully")
+        except Exception as file_error:
+            print(f"❌ Failed to save playbook file: {file_error}")
+            return jsonify({'error': f'Failed to save playbook file: {str(file_error)}'}), 500
+        
+        # Handle variables - convert to JSON string if provided
+        variables_json = None
+        if 'variables' in data and data['variables']:
+            try:
+                variables_json = json.dumps(data['variables'])
+            except Exception as var_error:
+                print(f"⚠️ Warning: Failed to serialize variables: {var_error}")
+        
+        # Create playbook object
+        try:
+            playbook = Playbook(
+                name=data['name'],
+                content=data['content'],
+                description=data.get('description', ''),
+                variables=variables_json,
+                os_type=data.get('os_type', 'linux')
+            )
+            print(f"📄 Created playbook object: {playbook.name}")
+        except Exception as obj_error:
+            print(f"❌ Failed to create playbook object: {obj_error}")
+            return jsonify({'error': f'Failed to create playbook object: {str(obj_error)}'}), 500
+        
+        # Save to database
+        try:
+            db.session.add(playbook)
+            db.session.commit()
+            print(f"✅ Playbook saved to database successfully")
+            return jsonify(playbook.to_dict()), 201
+        except Exception as db_error:
+            db.session.rollback()
+            print(f"❌ Database error: {db_error}")
+            # Try to clean up the file if database save failed
+            try:
+                if os.path.exists(playbook_file):
+                    os.remove(playbook_file)
+                    print(f"🧹 Cleaned up playbook file after database error")
+            except:
+                pass
+            return jsonify({'error': f'Database error: {str(db_error)}'}), 500
+            
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 400
+        print(f"❌ Unexpected error in create_playbook: {e}")
+        return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
 
 @app.route('/api/playbooks/<playbook_id>', methods=['PUT'])
 def update_playbook(playbook_id):
@@ -442,6 +543,7 @@ def update_playbook(playbook_id):
     playbook.content = data['content']
     playbook.description = data.get('description', '')
     playbook.variables = variables_json
+    playbook.os_type = data.get('os_type', playbook.os_type)
     playbook.updated_at = datetime.utcnow()
     
     try:
@@ -633,6 +735,8 @@ def download_playbook_file(playbook_id, file_id):
         download_name=playbook_file.filename,
         mimetype=playbook_file.mime_type
     )
+
+# Database initialization has been moved to database_init.py
 
 # Migration endpoint to add missing columns
 @app.route('/api/migrate-hosts', methods=['POST'])
@@ -1691,17 +1795,22 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
     try:
         # Create temporary inventory file with all hosts
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as inv_file:
-            # Separate Windows and Linux hosts
-            windows_hosts = []
-            linux_hosts = []
+            # Determine connection type based on playbook OS type
+            playbook_os_type = getattr(playbook, 'os_type', 'linux')
+            is_windows_playbook = playbook_os_type.lower() == 'windows'
             
-            for host in hosts:
-                # Check description to determine OS type since os_type column may not exist
-                description = getattr(host, 'description', '') or ''
-                if 'Windows host (WinRM port' in description:
-                    windows_hosts.append(host)
-                else:
-                    linux_hosts.append(host)
+            print(f"🖥️ Playbook OS type: {playbook_os_type}, Windows playbook: {is_windows_playbook}")
+            
+            if is_windows_playbook:
+                # For Windows playbooks, treat all hosts as Windows hosts
+                windows_hosts = hosts
+                linux_hosts = []
+                print(f"🪟 Windows playbook detected - using WinRM (port 5986) for all {len(hosts)} hosts")
+            else:
+                # For Linux playbooks, treat all hosts as Linux hosts
+                linux_hosts = hosts
+                windows_hosts = []
+                print(f"🐧 Linux playbook detected - using SSH (port 22) for all {len(hosts)} hosts")
             
             # Add Linux hosts to targets group
             inv_content = "[targets]\n"
@@ -1729,12 +1838,17 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 ips_value = variables.get('ips') or variables.get('hosts')
 
                 if ips_value and isinstance(ips_value, str):
-                    # Split comma-separated IPs and add them to inventory
+                    # Split comma-separated IPs and add them to inventory with appropriate connection settings
                     for ip in ips_value.split(','):
                         ip = ip.strip()
                         if ip and ip not in ['all', 'targets']:  # Skip special keywords
                             dynamic_ips.add(ip)
-                            inv_content += f"{ip}\n"
+                            if is_windows_playbook:
+                                # Add Windows dynamic IPs with WinRM settings
+                                inv_content += f"{ip} ansible_port=5986 ansible_connection=winrm ansible_winrm_server_cert_validation=ignore\n"
+                            else:
+                                # Add Linux dynamic IPs with SSH settings
+                                inv_content += f"{ip} ansible_port=22 ansible_connection=ssh\n"
 
             
 
@@ -3129,17 +3243,22 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
     try:
         # Create temporary inventory file with all hosts
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as inv_file:
-            # Separate Windows and Linux hosts
-            windows_hosts = []
-            linux_hosts = []
+            # Determine connection type based on playbook OS type
+            playbook_os_type = getattr(playbook, 'os_type', 'linux')
+            is_windows_playbook = playbook_os_type.lower() == 'windows'
             
-            for host in hosts:
-                # Check description to determine OS type since os_type column may not exist
-                description = getattr(host, 'description', '') or ''
-                if 'Windows host (WinRM port' in description:
-                    windows_hosts.append(host)
-                else:
-                    linux_hosts.append(host)
+            print(f"🖥️ Playbook OS type: {playbook_os_type}, Windows playbook: {is_windows_playbook}")
+            
+            if is_windows_playbook:
+                # For Windows playbooks, treat all hosts as Windows hosts
+                windows_hosts = hosts
+                linux_hosts = []
+                print(f"🪟 Windows playbook detected - using WinRM (port 5986) for all {len(hosts)} hosts")
+            else:
+                # For Linux playbooks, treat all hosts as Linux hosts
+                linux_hosts = hosts
+                windows_hosts = []
+                print(f"🐧 Linux playbook detected - using SSH (port 22) for all {len(hosts)} hosts")
             
             # Add Linux hosts to targets group
             inv_content = "[targets]\n"
@@ -3167,12 +3286,17 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 ips_value = variables.get('ips') or variables.get('hosts')
 
                 if ips_value and isinstance(ips_value, str):
-                    # Split comma-separated IPs and add them to inventory
+                    # Split comma-separated IPs and add them to inventory with appropriate connection settings
                     for ip in ips_value.split(','):
                         ip = ip.strip()
                         if ip and ip not in ['all', 'targets']:  # Skip special keywords
                             dynamic_ips.add(ip)
-                            inv_content += f"{ip}\n"
+                            if is_windows_playbook:
+                                # Add Windows dynamic IPs with WinRM settings
+                                inv_content += f"{ip} ansible_port=5986 ansible_connection=winrm ansible_winrm_server_cert_validation=ignore\n"
+                            else:
+                                # Add Linux dynamic IPs with SSH settings
+                                inv_content += f"{ip} ansible_port=22 ansible_connection=ssh\n"
 
             
 
@@ -4107,6 +4231,18 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     print('Client disconnected')
+
+def initialize_database():
+    """Initialize database schema and seed with default data"""
+    try:
+        with app.app_context():
+            from database_init import initialize_database as init_db
+            init_db()
+    except Exception as e:
+        print(f"Database initialization error: {e}")
+
+# Initialize database on app startup
+initialize_database()
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=True) 

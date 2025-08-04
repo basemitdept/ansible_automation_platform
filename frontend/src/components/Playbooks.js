@@ -505,6 +505,30 @@ const Playbooks = ({ currentUser }) => {
       ellipsis: true,
     },
     {
+      title: 'OS Type',
+      dataIndex: 'os_type',
+      key: 'os_type',
+      width: 100,
+      render: (osType) => {
+        const type = osType || 'linux';
+        return (
+          <Space>
+            {type === 'windows' ? (
+              <>
+                <span style={{ fontSize: '16px' }}>🪟</span>
+                <span style={{ color: '#1890ff' }}>Windows</span>
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: '16px' }}>🐧</span>
+                <span style={{ color: '#52c41a' }}>Linux</span>
+              </>
+            )}
+          </Space>
+        );
+      },
+    },
+    {
       title: 'Created',
       dataIndex: 'created_at',
       key: 'created_at',

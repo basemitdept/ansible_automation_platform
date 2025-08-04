@@ -1,0 +1,6 @@
+---
+- name: Windows test playbook
+  hosts: all
+  tasks:
+    - name: Test Windows task
+      win_shell: hostname

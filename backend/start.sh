@@ -27,6 +27,25 @@ ssh -o ConnectTimeout=5 -o BatchMode=yes ansible@localhost 'echo "SSH key authen
     }
 }
 
+# Initialize database and create users first
+echo "Initializing database..."
+python -c "
+import sys
+sys.path.append('/app')
+try:
+    from database_init import create_ansible_user, initialize_database
+    create_ansible_user()
+    print('✅ Database user initialization completed')
+    
+    # Also run full database initialization to ensure tables exist
+    print('🔄 Running full database initialization...')
+    initialize_database()
+    print('✅ Full database initialization completed')
+except Exception as e:
+    print(f'❌ Database initialization failed: {e}')
+    print('Continuing startup - app will retry database connection...')
+"
+
 # Start Flask application
 echo "Starting Flask application..."
 exec python app.py

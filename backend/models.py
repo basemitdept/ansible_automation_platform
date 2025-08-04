@@ -50,6 +50,7 @@ class Playbook(db.Model):
     content = db.Column(db.Text, nullable=False)
     description = db.Column(db.Text)
     variables = db.Column(db.Text)  # JSON string storing variable definitions
+    os_type = db.Column(db.String(50), nullable=False, default='linux')  # OS type column
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -69,6 +70,7 @@ class Playbook(db.Model):
             'content': self.content,
             'description': self.description,
             'variables': variables_data,
+            'os_type': self.os_type,
             'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z'
         }
