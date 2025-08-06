@@ -65,8 +65,12 @@ const Hosts = () => {
     setLoading(true);
     try {
       const response = await hostsAPI.getAll();
-      setHosts(response.data);
-      applyFilters(response.data);
+      // Sort by newest first (created_at descending)
+      const sortedHosts = response.data.sort((a, b) => 
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      setHosts(sortedHosts);
+      applyFilters(sortedHosts);
     } catch (error) {
       console.error('Failed to fetch hosts:', error);
       const errorMessage = error.response?.data?.details || error.response?.data?.error || error.message || 'Failed to fetch hosts';
@@ -79,7 +83,11 @@ const Hosts = () => {
   const fetchHostGroups = async () => {
     try {
       const response = await hostGroupsAPI.getAll();
-      setHostGroups(response.data);
+      // Sort by newest first (created_at descending)
+      const sortedGroups = response.data.sort((a, b) => 
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      setHostGroups(sortedGroups);
     } catch (error) {
       console.error('Failed to fetch host groups:', error);
       const errorMessage = error.response?.data?.details || error.response?.data?.error || error.message || 'Failed to fetch host groups';
@@ -104,7 +112,12 @@ const Hosts = () => {
       filtered = filtered.filter(host => host.group_id === selectedGroup);
     }
     
-    setFilteredHosts(filtered);
+    // Keep sort order (newest first) after filtering
+    const sortedFiltered = filtered.sort((a, b) => 
+      new Date(b.created_at) - new Date(a.created_at)
+    );
+    
+    setFilteredHosts(sortedFiltered);
   };
 
   const handleSearch = (value) => {
@@ -313,7 +326,11 @@ const Hosts = () => {
       title: 'Created',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (date) => moment(date).format('MMM DD, YYYY HH:mm'),
+      render: (date) => {
+        if (!date) return '-';
+        const momentDate = moment(date);
+        return momentDate.isValid() ? momentDate.format('MMM DD, YYYY HH:mm') : '-';
+      },
       width: 180,
     },
     {

@@ -66,14 +66,14 @@ const History = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetchHistory();
+    fetchHistory(true); // Initial load with loading spinner
     
     // Set up page visibility listener
     const handleVisibilityChange = () => {
       isPageVisible.current = !document.hidden;
       if (!document.hidden && autoRefresh) {
         // Page became visible, refresh immediately and restart interval
-        fetchHistory();
+        fetchHistory(); // Background refresh when tab becomes visible
         startAutoRefresh();
       } else if (document.hidden) {
         // Page became hidden, stop auto refresh
@@ -104,7 +104,7 @@ const History = () => {
     stopAutoRefresh(); // Clear any existing interval
     intervalRef.current = setInterval(() => {
       if (isPageVisible.current && !loading) {
-        fetchHistory();
+        fetchHistory(); // Background auto-refresh, no loading spinner
       }
     }, 10000); // Refresh every 10 seconds for history
   };
@@ -116,16 +116,28 @@ const History = () => {
     }
   };
 
-  const fetchHistory = async () => {
-    setLoading(true);
+  const fetchHistory = async (isManualRefresh = false) => {
+    // Only show loading spinner for manual refresh, not auto-refresh
+    if (isManualRefresh) {
+      setLoading(true);
+    }
     try {
       const response = await historyAPI.getAll();
-      setHistory(response.data);
+      // Sort by newest first (started_at or created_at descending)
+      const sortedHistory = response.data.sort((a, b) => {
+        const dateA = new Date(a.started_at || a.created_at);
+        const dateB = new Date(b.started_at || b.created_at);
+        return dateB - dateA;
+      });
+      setHistory(sortedHistory);
       setLastRefresh(new Date());
     } catch (error) {
       console.error('Failed to fetch execution history');
     } finally {
-      setLoading(false);
+      // Only clear loading spinner if it was a manual refresh
+      if (isManualRefresh) {
+        setLoading(false);
+      }
     }
   };
 
@@ -180,7 +192,7 @@ const History = () => {
     try {
       await historyAPI.delete(id);
       message.success('Execution history deleted successfully');
-      fetchHistory(); // Refresh the list
+      fetchHistory(true); // Manual refresh after delete with loading spinner
     } catch (error) {
       message.error('Failed to delete execution history');
       console.error('Delete error:', error);
@@ -447,7 +459,11 @@ const History = () => {
       title: 'Started',
       dataIndex: 'started_at',
       key: 'started_at',
-      render: (date) => moment(date).format('MMM DD, YYYY HH:mm:ss'),
+      render: (date) => {
+        if (!date) return '-';
+        const momentDate = moment(date);
+        return momentDate.isValid() ? momentDate.format('MMM DD, YYYY HH:mm:ss') : '-';
+      },
       width: 180,
       sorter: (a, b) => moment(a.started_at).unix() - moment(b.started_at).unix(),
       defaultSortOrder: 'descend',
@@ -523,7 +539,7 @@ const History = () => {
           </Space>
         }
         extra={
-          <Button onClick={fetchHistory} loading={loading} icon={<ReloadOutlined />}>
+          <Button onClick={() => fetchHistory(true)} loading={loading} icon={<ReloadOutlined />}>
             Refresh
           </Button>
         }
@@ -586,11 +602,21 @@ const History = () => {
                   }
                 </div>
                 <div>
-                  <Text strong>Started:</Text> {moment(selectedExecution.started_at).format('MMM DD, YYYY HH:mm:ss')}
+                  <Text strong>Started:</Text> {
+                    selectedExecution.started_at 
+                      ? moment(selectedExecution.started_at).isValid() 
+                        ? moment(selectedExecution.started_at).format('MMM DD, YYYY HH:mm:ss')
+                        : 'Invalid date'
+                      : 'Not available'
+                  }
                 </div>
                 {selectedExecution.finished_at && (
                   <div>
-                    <Text strong>Finished:</Text> {moment(selectedExecution.finished_at).format('MMM DD, YYYY HH:mm:ss')}
+                    <Text strong>Finished:</Text> {
+                      moment(selectedExecution.finished_at).isValid()
+                        ? moment(selectedExecution.finished_at).format('MMM DD, YYYY HH:mm:ss')
+                        : 'Invalid date'
+                    }
                   </div>
                 )}
               </Space>

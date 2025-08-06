@@ -73,7 +73,11 @@ const Webhooks = () => {
     setLoading(true);
     try {
       const response = await webhooksAPI.getAll();
-      setWebhooks(response.data);
+      // Sort by newest first (created_at descending)
+      const sortedWebhooks = response.data.sort((a, b) => 
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      setWebhooks(sortedWebhooks);
     } catch (error) {
       message.error('Failed to fetch webhooks');
     } finally {
@@ -201,9 +205,49 @@ const Webhooks = () => {
     }
   };
 
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    message.success('Copied to clipboard');
+  const copyToClipboard = async (text) => {
+    try {
+      // Try modern clipboard API first
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        message.success('Copied to clipboard');
+        return;
+      }
+      
+      // Fallback for browsers without clipboard API or HTTP contexts
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.top = '0';
+      textArea.style.left = '0';
+      textArea.style.width = '2em';
+      textArea.style.height = '2em';
+      textArea.style.padding = '0';
+      textArea.style.border = 'none';
+      textArea.style.outline = 'none';
+      textArea.style.boxShadow = 'none';
+      textArea.style.background = 'transparent';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+          message.success('Copied to clipboard');
+        } else {
+          throw new Error('Copy command failed');
+        }
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+        message.error('Copy to clipboard failed. Please copy manually.');
+      } finally {
+        document.body.removeChild(textArea);
+      }
+    } catch (error) {
+      console.error('Copy to clipboard error:', error);
+      message.error('Copy to clipboard failed. Please copy manually.');
+    }
   };
 
   const getWebhookUrl = (webhook) => {
@@ -361,7 +405,11 @@ const Webhooks = () => {
       title: 'Created',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (date) => moment(date).format('YYYY-MM-DD HH:mm'),
+      render: (date) => {
+        if (!date) return '-';
+        const momentDate = moment(date);
+        return momentDate.isValid() ? momentDate.format('YYYY-MM-DD HH:mm') : '-';
+      },
     },
     {
       title: 'Actions',
@@ -493,7 +541,11 @@ const Webhooks = () => {
       title: 'Created',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (date) => moment(date).format('YYYY-MM-DD HH:mm'),
+      render: (date) => {
+        if (!date) return '-';
+        const momentDate = moment(date);
+        return momentDate.isValid() ? momentDate.format('YYYY-MM-DD HH:mm') : '-';
+      },
     },
     {
       title: 'Actions',

@@ -211,26 +211,7 @@ const Login = ({ onLoginSuccess }) => {
                 </Form.Item>
               </Form>
 
-              <Divider />
 
-              <div style={{ textAlign: 'center' }}>
-                <Alert
-                  message={
-                    <div>
-                      <strong>Default Admin Account:</strong>
-                      <br />
-                      Username: admin | Password: admin
-                      <br />
-                      <Text type="secondary" style={{ fontSize: '12px' }}>
-                        Please change the default password after first login
-                      </Text>
-                    </div>
-                  }
-                  type="info"
-                  style={{ textAlign: 'left', marginTop: '16px' }}
-                  showIcon
-                />
-              </div>
             </Card>
           </div>
         </Col>

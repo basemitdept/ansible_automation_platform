@@ -1120,18 +1120,21 @@ def create_host():
         elif not description and os_type == 'linux':
             description = f"Linux host (SSH port {port})"
         
-        # Simple insert with only guaranteed columns
+        # Simple insert with timestamp columns
         query = """
-            INSERT INTO hosts (id, name, hostname, description, group_id) 
-            VALUES (:id, :name, :hostname, :description, :group_id)
+            INSERT INTO hosts (id, name, hostname, description, group_id, created_at, updated_at) 
+            VALUES (:id, :name, :hostname, :description, :group_id, :created_at, :updated_at)
         """
         
+        current_time = datetime.utcnow()
         params = {
             'id': host_id,
             'name': data['name'],
             'hostname': data['hostname'],
             'description': description,
-            'group_id': data.get('group_id')
+            'group_id': data.get('group_id'),
+            'created_at': current_time,
+            'updated_at': current_time
         }
         
         db.session.execute(text(query), params)
@@ -1147,8 +1150,8 @@ def create_host():
             'os_type': os_type,
             'port': port,
             'group': None,
-            'created_at': datetime.utcnow().isoformat() + 'Z',
-            'updated_at': datetime.utcnow().isoformat() + 'Z'
+            'created_at': current_time.isoformat() + 'Z',
+            'updated_at': current_time.isoformat() + 'Z'
         }
         
         return jsonify(result), 201

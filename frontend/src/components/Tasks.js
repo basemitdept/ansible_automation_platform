@@ -122,7 +122,13 @@ const Tasks = () => {
     setLoading(true);
     try {
       const response = await tasksAPI.getAll();
-      setTasks(response.data);
+      // Sort by newest first (started_at or created_at descending)
+      const sortedTasks = response.data.sort((a, b) => {
+        const dateA = new Date(a.started_at || a.created_at);
+        const dateB = new Date(b.started_at || b.created_at);
+        return dateB - dateA;
+      });
+      setTasks(sortedTasks);
       setLastRefresh(new Date());
     } catch (error) {
       console.error('Failed to fetch tasks');
@@ -265,7 +271,11 @@ const Tasks = () => {
       title: 'Started',
       dataIndex: 'started_at',
       key: 'started_at',
-      render: (date) => moment(date).format('MMM DD, HH:mm:ss'),
+      render: (date) => {
+        if (!date) return '-';
+        const momentDate = moment(date);
+        return momentDate.isValid() ? momentDate.format('MMM DD, HH:mm:ss') : '-';
+      },
       width: 150,
     },
     {

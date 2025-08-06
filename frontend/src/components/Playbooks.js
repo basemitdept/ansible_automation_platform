@@ -165,8 +165,12 @@ const Playbooks = ({ currentUser }) => {
     setLoading(true);
     try {
       const response = await playbooksAPI.getAll();
-      setPlaybooks(response.data);
-      setFilteredPlaybooks(response.data);
+      // Sort by newest first (created_at descending)
+      const sortedPlaybooks = response.data.sort((a, b) => 
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      setPlaybooks(sortedPlaybooks);
+      setFilteredPlaybooks(sortedPlaybooks);
     } catch (error) {
       message.error('Failed to fetch playbooks');
     } finally {
@@ -192,7 +196,11 @@ const Playbooks = ({ currentUser }) => {
         playbook.name.toLowerCase().includes(value.toLowerCase()) ||
         (playbook.description && playbook.description.toLowerCase().includes(value.toLowerCase()))
       );
-      setFilteredPlaybooks(filtered);
+      // Keep sort order (newest first) after filtering
+      const sortedFiltered = filtered.sort((a, b) => 
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      setFilteredPlaybooks(sortedFiltered);
     }
   };
 

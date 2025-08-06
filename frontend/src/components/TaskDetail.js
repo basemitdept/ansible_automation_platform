@@ -65,7 +65,7 @@ const TaskDetail = () => {
     
     const handleTaskUpdate = (data) => {
       if (data.task_id === taskId) {
-        console.log('TaskDetail: Received task update:', data);
+        console.log('TaskDetail: Received WebSocket task update:', data);
         setTask(prevTask => {
           console.log('TaskDetail: Previous task status:', prevTask?.status, 'New status:', data.status);
           const newTask = { ...prevTask, status: data.status };
@@ -73,12 +73,17 @@ const TaskDetail = () => {
           // Check if task just completed and trigger redirect
           if (prevTask && prevTask.status !== data.status && 
               (data.status === 'completed' || data.status === 'failed' || data.status === 'partial')) {
-            console.log('TaskDetail: Task completed, triggering redirect for status:', data.status);
-            handleTaskCompletion(data.status);
+            console.log('TaskDetail: WebSocket - Task completed, triggering redirect for status:', data.status);
+            // Add a small delay to ensure user can see the completion
+            setTimeout(() => {
+              handleTaskCompletion(data.status);
+            }, 1000);
           }
           
           return newTask;
         });
+      } else {
+        console.log('TaskDetail: Ignoring WebSocket update for different task:', data.task_id, 'vs', taskId);
       }
     };
 
@@ -141,15 +146,25 @@ const TaskDetail = () => {
           
           console.log('TaskDetail: Polled status:', currentStatus, 'Current task status:', task?.status);
           
-          // Only redirect if task has been completed for a while (to allow viewing output)
+          // Check if task completed and trigger redirect if not already redirecting
           if (currentStatus === 'completed' || currentStatus === 'failed' || currentStatus === 'partial') {
-            console.log('TaskDetail: Task completed! Will stay on page to show live output');
-            setTask(prevTask => ({
-              ...prevTask,
-              status: currentStatus,
-              finished_at: response.data.finished_at,
-              error_output: response.data.error_output
-            }));
+            console.log('TaskDetail: Task completed via polling, current status:', currentStatus);
+            setTask(prevTask => {
+              const updatedTask = {
+                ...prevTask,
+                status: currentStatus,
+                finished_at: response.data.finished_at,
+                error_output: response.data.error_output
+              };
+              
+              // Trigger redirect if status changed to completed
+              if (prevTask && prevTask.status !== currentStatus) {
+                console.log('TaskDetail: Status changed from', prevTask.status, 'to', currentStatus, '- triggering redirect');
+                handleTaskCompletion(currentStatus);
+              }
+              
+              return updatedTask;
+            });
           }
         } catch (error) {
           console.error('TaskDetail: Error in slow polling:', error);
@@ -247,15 +262,22 @@ const TaskDetail = () => {
         clearInterval(countdownIntervalRef.current);
         countdownIntervalRef.current = null;
         
-        // Direct redirect
+        // Direct redirect with multiple fallbacks
         try {
           console.log('TaskDetail: Executing navigation to /history');
           navigate('/history');
           console.log('TaskDetail: Navigation completed successfully');
         } catch (error) {
           console.error('TaskDetail: Navigation error:', error);
-          // Fallback: try window.location
-          window.location.href = '/history';
+          // Fallback 1: try window.location with hash
+          try {
+            window.location.hash = '#/history';
+            setTimeout(() => window.location.reload(), 100);
+          } catch (hashError) {
+            console.error('TaskDetail: Hash navigation failed:', hashError);
+            // Fallback 2: full page reload to history
+            window.location.href = window.location.origin + '/#/history';
+          }
         }
       }
     }, 1000);
@@ -524,7 +546,10 @@ const TaskDetail = () => {
                 {getStatusTag(task.status)}
               </Descriptions.Item>
               <Descriptions.Item label="Started">
-                {moment(task.started_at).format('MMM DD, YYYY HH:mm:ss')}
+                {task.started_at && moment(task.started_at).isValid() 
+                  ? moment(task.started_at).format('MMM DD, YYYY HH:mm:ss')
+                  : 'Not available'
+                }
               </Descriptions.Item>
               <Descriptions.Item label="Duration">
                 {(() => {
@@ -539,7 +564,12 @@ const TaskDetail = () => {
                 })()}
               </Descriptions.Item>
               <Descriptions.Item label="Finished">
-                {task.finished_at ? moment(task.finished_at).format('MMM DD, YYYY HH:mm:ss') : 'Still running...'}
+                {task.finished_at 
+                  ? moment(task.finished_at).isValid()
+                    ? moment(task.finished_at).format('MMM DD, YYYY HH:mm:ss')
+                    : 'Invalid date'
+                  : 'Still running...'
+                }
               </Descriptions.Item>
             </Descriptions>
           </Col>

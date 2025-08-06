@@ -43,7 +43,11 @@ const Credentials = () => {
     try {
       setLoading(true);
       const response = await credentialsAPI.getAll();
-      setCredentials(response.data);
+      // Sort by newest first (created_at descending)
+      const sortedCredentials = response.data.sort((a, b) => 
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      setCredentials(sortedCredentials);
     } catch (error) {
       message.error('Failed to fetch credentials');
       console.error('Error fetching credentials:', error);

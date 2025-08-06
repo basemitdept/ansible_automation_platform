@@ -47,11 +47,16 @@ const Dashboard = () => {
     recentHistory: []
   });
 
-  // No auto-refresh - only manual refresh available
+  // Auto-refresh functionality
+  const autoRefresh = true; // Always auto refresh in background
+  const intervalRef = useRef(null);
+  const isPageVisible = useRef(true);
 
-  const fetchDashboardData = useCallback(async () => {
-    // Fetching dashboard data
-    setLoading(true);
+  const fetchDashboardData = useCallback(async (isManualRefresh = false) => {
+    // Only show loading spinner for manual refresh, not auto-refresh
+    if (isManualRefresh) {
+      setLoading(true);
+    }
     try {
       const [tasksRes, historyRes, hostsRes, groupsRes, playbooksRes, usersRes] = await Promise.all([
         tasksAPI.getAll().catch(() => ({ data: [] })),
@@ -131,25 +136,75 @@ const Dashboard = () => {
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
-      setLoading(false);
+      // Only clear loading spinner if it was a manual refresh
+      if (isManualRefresh) {
+        setLoading(false);
+      }
     }
   }, []); // No dependencies needed
 
   const handleManualRefresh = () => {
-    fetchDashboardData();
+    fetchDashboardData(true); // Pass true for manual refresh to show loading
   };
 
-  // Auto-refresh toggle removed - only manual refresh available
-
-  // Initial data fetch
-  useEffect(() => {
-    // Dashboard component mounted, fetching initial data
-    fetchDashboardData();
+  // Auto-refresh functions
+  const startAutoRefresh = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
+    console.log('🔄 Dashboard auto-refresh started (every 10 seconds)');
+    intervalRef.current = setInterval(() => {
+      if (isPageVisible.current) {
+        console.log('⏰ Dashboard auto-refresh triggered');
+        fetchDashboardData();
+      }
+    }, 10000); // Refresh every 10 seconds for testing (was 30000)
   }, [fetchDashboardData]);
 
-  // Auto-refresh is disabled - only manual refresh available
+  const stopAutoRefresh = useCallback(() => {
+    if (intervalRef.current) {
+      console.log('⏹️ Dashboard auto-refresh stopped');
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
 
-  // No auto-refresh - data loads once on mount
+  // Initial data fetch and page visibility setup
+  useEffect(() => {
+    fetchDashboardData(true); // Initial load with loading spinner
+    
+    // Set up page visibility listener
+    const handleVisibilityChange = () => {
+      isPageVisible.current = !document.hidden;
+      if (!document.hidden && autoRefresh) {
+        // Page became visible, refresh immediately and restart interval
+        fetchDashboardData(); // Background refresh when tab becomes visible
+        startAutoRefresh();
+      } else if (document.hidden) {
+        // Page became hidden, stop auto refresh
+        stopAutoRefresh();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopAutoRefresh();
+    };
+  }, [fetchDashboardData, startAutoRefresh, stopAutoRefresh]);
+
+  // Auto-refresh effect
+  useEffect(() => {
+    console.log('🚀 Dashboard auto-refresh effect triggered', { autoRefresh, isPageVisible: isPageVisible.current });
+    if (autoRefresh && isPageVisible.current) {
+      startAutoRefresh();
+    } else {
+      stopAutoRefresh();
+    }
+    
+    return () => stopAutoRefresh();
+  }, [autoRefresh, startAutoRefresh, stopAutoRefresh]);
 
   const getStatusColor = (status) => {
     switch (status) {
