@@ -1,1 +1,0 @@
-echo hiiiii >> /tmp/testtest

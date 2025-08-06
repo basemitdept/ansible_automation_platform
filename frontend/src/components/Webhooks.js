@@ -724,7 +724,9 @@ const Webhooks = () => {
               allowClear
               style={{ width: '100%' }}
             >
-              {credentials.map(credential => (
+              {credentials
+                .filter(credential => credential.credential_type === 'ssh' || !credential.credential_type) // Show SSH credentials only
+                .map(credential => (
                 <Option key={credential.id} value={credential.id}>
                   {credential.name} ({credential.username})
                 </Option>

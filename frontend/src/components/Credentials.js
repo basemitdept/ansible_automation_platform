@@ -11,7 +11,8 @@ import {
   message,
   Popconfirm,
   Tag,
-  Typography
+  Typography,
+  Select
 } from 'antd';
 import {
   PlusOutlined,
@@ -31,6 +32,7 @@ const Credentials = () => {
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCredential, setEditingCredential] = useState(null);
+  const [credentialType, setCredentialType] = useState('ssh');
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -53,13 +55,16 @@ const Credentials = () => {
   const handleCreate = () => {
     setEditingCredential(null);
     form.resetFields();
+    setCredentialType('ssh');
     setModalVisible(true);
   };
 
   const handleEdit = (credential) => {
     setEditingCredential(credential);
+    setCredentialType(credential.credential_type || 'ssh');
     form.setFieldsValue({
       name: credential.name,
+      credential_type: credential.credential_type || 'ssh',
       username: credential.username,
       description: credential.description,
       is_default: credential.is_default,
@@ -113,15 +118,30 @@ const Credentials = () => {
       ),
     },
     {
+      title: 'Type',
+      dataIndex: 'credential_type',
+      key: 'credential_type',
+      render: (type) => (
+        <Tag color={type === 'git_token' ? 'green' : 'blue'}>
+          {type === 'git_token' ? 'Git Token' : 'SSH'}
+        </Tag>
+      ),
+    },
+    {
       title: 'Username',
       dataIndex: 'username',
       key: 'username',
-      render: (text) => (
-        <Space>
-          <UserOutlined />
-          <code>{text}</code>
-        </Space>
-      ),
+      render: (text, record) => {
+        if (record.credential_type === 'git_token') {
+          return <Text type="secondary">N/A</Text>;
+        }
+        return (
+          <Space>
+            <UserOutlined />
+            <code>{text}</code>
+          </Space>
+        );
+      },
     },
     {
       title: 'Description',
@@ -224,31 +244,65 @@ const Credentials = () => {
               { max: 100, message: 'Name must be less than 100 characters' }
             ]}
           >
-            <Input placeholder="e.g., Production SSH, Development Server" />
+            <Input placeholder="e.g., Production SSH, Git Token" />
           </Form.Item>
 
           <Form.Item
-            name="username"
-            label="SSH Username"
-            rules={[
-              { required: true, message: 'Please enter the SSH username' },
-              { max: 100, message: 'Username must be less than 100 characters' }
-            ]}
+            name="credential_type"
+            label="Credential Type"
+            rules={[{ required: true, message: 'Please select credential type' }]}
+            initialValue="ssh"
           >
-            <Input placeholder="e.g., ansible, ubuntu, root" />
+            <Select
+              placeholder="Select credential type"
+              onChange={(value) => setCredentialType(value)}
+              value={credentialType}
+            >
+              <Select.Option value="ssh">SSH Credential</Select.Option>
+              <Select.Option value="git_token">Git Token</Select.Option>
+            </Select>
           </Form.Item>
 
-          <Form.Item
-            name="password"
-            label="SSH Password"
-            rules={[
-              { required: !editingCredential, message: 'Please enter the SSH password' }
-            ]}
-          >
-            <Input.Password 
-              placeholder={editingCredential ? "Leave blank to keep current password" : "Enter SSH password"} 
-            />
-          </Form.Item>
+          {credentialType === 'ssh' && (
+            <>
+              <Form.Item
+                name="username"
+                label="SSH Username"
+                rules={[
+                  { required: true, message: 'Please enter the SSH username' },
+                  { max: 100, message: 'Username must be less than 100 characters' }
+                ]}
+              >
+                <Input placeholder="e.g., ansible, ubuntu, root" />
+              </Form.Item>
+
+              <Form.Item
+                name="password"
+                label="SSH Password"
+                rules={[
+                  { required: !editingCredential, message: 'Please enter the SSH password' }
+                ]}
+              >
+                <Input.Password 
+                  placeholder={editingCredential ? "Leave blank to keep current password" : "Enter SSH password"} 
+                />
+              </Form.Item>
+            </>
+          )}
+
+          {credentialType === 'git_token' && (
+            <Form.Item
+              name="token"
+              label="Git Token"
+              rules={[
+                { required: !editingCredential, message: 'Please enter the Git token' }
+              ]}
+            >
+              <Input.Password 
+                placeholder={editingCredential ? "Leave blank to keep current token" : "Enter Git token (e.g., GitHub personal access token)"} 
+              />
+            </Form.Item>
+          )}
 
           <Form.Item
             name="description"

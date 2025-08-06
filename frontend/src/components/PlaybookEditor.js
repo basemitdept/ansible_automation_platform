@@ -604,7 +604,9 @@ const PlaybookEditor = () => {
                   <span style={{ color: '#52c41a' }}>No credentials (SSH keys)</span>
                 </Space>
               </Option>
-              {credentials.map(cred => (
+              {credentials
+                .filter(cred => cred.credential_type === 'ssh' || !cred.credential_type) // Show SSH credentials only
+                .map(cred => (
                 <Option key={cred.id} value={cred.id}>
                   <Space>
                     <UserOutlined />

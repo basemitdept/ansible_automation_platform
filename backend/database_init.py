@@ -43,6 +43,23 @@ def ensure_additional_columns():
             ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS os_type VARCHAR(50) DEFAULT 'linux';
         """))
         
+        # Ensure Git metadata columns exist in playbooks table
+        db.session.execute(text("""
+            ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS git_repo_url VARCHAR(500);
+        """))
+        
+        db.session.execute(text("""
+            ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS git_file_path VARCHAR(500);
+        """))
+        
+        db.session.execute(text("""
+            ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS git_filename VARCHAR(255);
+        """))
+        
+        db.session.execute(text("""
+            ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS creation_method VARCHAR(50) DEFAULT 'manual';
+        """))
+        
         # Ensure host_list column exists in tasks table
         db.session.execute(text("""
             ALTER TABLE tasks ADD COLUMN IF NOT EXISTS host_list TEXT;
@@ -57,6 +74,26 @@ def ensure_additional_columns():
         db.session.execute(text("""
             ALTER TABLE tasks ADD COLUMN IF NOT EXISTS webhook_id VARCHAR(36);
         """))
+        
+        # Ensure user_id column exists in execution_history table
+        # Check if column exists using information_schema
+        try:
+            result = db.session.execute(text("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'execution_history' AND column_name = 'user_id';
+            """)).fetchone()
+            
+            if result:
+                print("ℹ️ user_id column already exists in execution_history")
+            else:
+                print("🔄 Adding user_id column to execution_history table...")
+                db.session.execute(text("""
+                    ALTER TABLE execution_history ADD COLUMN user_id VARCHAR(36);
+                """))
+                print("✅ Added user_id column to execution_history table")
+        except Exception as e:
+            print(f"⚠️ Error handling user_id column: {e}")
+            db.session.rollback()
         
         db.session.commit()
         print("✅ Additional columns ensured")
@@ -383,6 +420,47 @@ def create_ansible_user():
             pass
         raise
 
+def ensure_git_credential_columns():
+    """Ensure database has all required columns for Git credential support"""
+    try:
+        from sqlalchemy import text
+        print("🔍 Checking Git credential columns...")
+        
+        # Check and add columns to credentials table
+        try:
+            db.session.execute(text("SELECT credential_type FROM credentials LIMIT 1"))
+        except:
+            print("➕ Adding credential_type column...")
+            db.session.execute(text("ALTER TABLE credentials ADD COLUMN credential_type VARCHAR(50) DEFAULT 'ssh'"))
+            db.session.commit()
+        
+        try:
+            db.session.execute(text("SELECT token FROM credentials LIMIT 1"))
+        except:
+            print("➕ Adding token column...")
+            db.session.execute(text("ALTER TABLE credentials ADD COLUMN token VARCHAR(500)"))
+            db.session.commit()
+        
+        # Check and add columns to playbooks table
+        try:
+            db.session.execute(text("SELECT git_visibility FROM playbooks LIMIT 1"))
+        except:
+            print("➕ Adding git_visibility column...")
+            db.session.execute(text("ALTER TABLE playbooks ADD COLUMN git_visibility VARCHAR(20) DEFAULT 'public'"))
+            db.session.commit()
+        
+        try:
+            db.session.execute(text("SELECT git_credential_id FROM playbooks LIMIT 1"))
+        except:
+            print("➕ Adding git_credential_id column...")
+            db.session.execute(text("ALTER TABLE playbooks ADD COLUMN git_credential_id VARCHAR(36)"))
+            db.session.commit()
+            
+        print("✅ Git credential columns verified/updated successfully")
+        
+    except Exception as e:
+        print(f"⚠️ Git credential column update warning: {e}")
+
 def initialize_database():
     """Main function to initialize the entire database"""
     print("🚀 Starting database initialization...")
@@ -393,6 +471,9 @@ def initialize_database():
         
         # Create schema and tables
         create_database_schema()
+        
+        # Ensure Git credential columns exist
+        ensure_git_credential_columns()
         
         # Seed with default data
         seed_default_data()

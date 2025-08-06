@@ -1,0 +1,7 @@
+---
+- name: Sample Linux playbook
+  hosts: {{ test }}
+  become: {{ boolean }}
+  tasks:
+    - name: Update system packages
+      command: hostname

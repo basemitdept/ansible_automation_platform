@@ -1045,7 +1045,9 @@ const History = () => {
                     <div>
                       <Text>Select a credential:</Text>
                       <div style={{ marginTop: 8 }}>
-                        {credentials.map(cred => (
+                        {credentials
+                          .filter(cred => cred.credential_type === 'ssh' || !cred.credential_type) // Show SSH credentials only
+                          .map(cred => (
                           <div key={cred.id} style={{ marginBottom: 8 }}>
                             <label style={{ display: 'flex', alignItems: 'center' }}>
                               <input

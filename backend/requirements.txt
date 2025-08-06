@@ -13,4 +13,6 @@ werkzeug==2.3.7
 psutil==5.9.5
 pywinrm==0.4.3
 requests==2.31.0
-requests-ntlm==1.2.0 
+requests-ntlm==1.2.0
+GitPython==3.1.40
+PyYAML==6.0.1 

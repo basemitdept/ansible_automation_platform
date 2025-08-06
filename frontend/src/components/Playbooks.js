@@ -16,7 +16,10 @@ import {
   Divider,
   Tooltip,
   Alert,
-  Select
+  Select,
+  Radio,
+  Row,
+  Col
 } from 'antd';
 import {
   PlusOutlined,
@@ -28,10 +31,13 @@ import {
   UploadOutlined,
   FileOutlined,
   DownloadOutlined,
-  InboxOutlined
+  InboxOutlined,
+  GitlabOutlined,
+  GithubOutlined,
+  BranchesOutlined
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
-import { playbooksAPI, playbookFilesAPI } from '../services/api';
+import { playbooksAPI, playbookFilesAPI, credentialsAPI } from '../services/api';
 import { hasPermission } from '../utils/permissions';
 import moment from 'moment';
 
@@ -55,6 +61,14 @@ const Playbooks = ({ currentUser }) => {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [canUploadFiles, setCanUploadFiles] = useState(false);
   const [tempFiles, setTempFiles] = useState([]); // Store files before playbook is saved
+  
+  // Git import state
+  const [creationMethod, setCreationMethod] = useState('manual'); // 'manual' or 'git'
+  const [gitImportLoading, setGitImportLoading] = useState(false);
+  const [importedContent, setImportedContent] = useState('');
+  const [gitVisibility, setGitVisibility] = useState('public'); // 'public' or 'private'
+  const [credentials, setCredentials] = useState([]);
+  const [gitForm] = Form.useForm();
 
   // VS Code-like editor options
   const editorOptions = {
@@ -144,6 +158,7 @@ const Playbooks = ({ currentUser }) => {
 
   useEffect(() => {
     fetchPlaybooks();
+    fetchCredentials();
   }, []);
 
   const fetchPlaybooks = async () => {
@@ -156,6 +171,15 @@ const Playbooks = ({ currentUser }) => {
       message.error('Failed to fetch playbooks');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCredentials = async () => {
+    try {
+      const response = await credentialsAPI.getAll();
+      setCredentials(response.data);
+    } catch (error) {
+      console.error('Failed to fetch credentials:', error);
     }
   };
 
@@ -237,6 +261,9 @@ const Playbooks = ({ currentUser }) => {
   const handleCreate = () => {
     setEditingPlaybook(null);
     form.resetFields();
+    gitForm.resetFields();
+    setCreationMethod('manual');
+    setImportedContent('');
     const defaultContent = getDefaultContent('linux'); // Default to Linux
     
     setEditorContent(defaultContent);
@@ -256,9 +283,73 @@ const Playbooks = ({ currentUser }) => {
   };
 
   const handleEdit = (playbook) => {
+    console.log('🔥 EDITING PLAYBOOK:', playbook);
+    console.log('🔥 CREATION METHOD:', playbook.creation_method);
+    console.log('🔥 GIT REPO URL:', playbook.git_repo_url);
+    console.log('🔥 GIT FILE PATH:', playbook.git_file_path);
+    console.log('🔥 GIT FILENAME:', playbook.git_filename);
+    console.log('🔥 GIT VISIBILITY:', playbook.git_visibility);
+    console.log('🔥 GIT CREDENTIAL ID:', playbook.git_credential_id);
+    
     setEditingPlaybook(playbook);
     setEditorContent(playbook.content || '');
-    form.setFieldsValue(playbook);
+    
+    // Set creation method based on how the playbook was originally created
+    const method = playbook.creation_method || 'manual';
+    console.log('🔥 SETTING CREATION METHOD TO:', method);
+    setCreationMethod(method);
+    
+    // Set git visibility for git imports (default to public if not set)
+    if (method === 'git') {
+      const visibility = playbook.git_visibility || 'public';
+      console.log('🔥 SETTING GIT VISIBILITY TO:', visibility);
+      setGitVisibility(visibility);
+    }
+    
+    // Set form values including creation_method and git metadata
+    form.setFieldsValue({
+      ...playbook,
+      creation_method: method,
+      git_visibility: playbook.git_visibility || 'public',
+      git_credential_id: playbook.git_credential_id || ''
+    });
+    
+    // If it was created from Git, populate Git form fields
+    if (method === 'git') {
+      console.log('🔥 POPULATING GIT FORM WITH:', {
+        repo_url: playbook.git_repo_url,
+        file_path: playbook.git_file_path,
+        filename: playbook.git_filename
+      });
+      
+      gitForm.setFieldsValue({
+        repo_url: playbook.git_repo_url || '',
+        file_path: playbook.git_file_path || '',
+        filename: playbook.git_filename || '',
+        git_visibility: playbook.git_visibility || 'public',
+        git_credential_id: playbook.git_credential_id || ''
+      });
+      
+      // Force a refresh to make sure values are visible
+      setTimeout(() => {
+        const visibility = playbook.git_visibility || 'public';
+        console.log('🔥 TIMEOUT - SETTING GIT FORM VALUES, VISIBILITY:', visibility);
+        console.log('🔥 TIMEOUT - CREDENTIAL ID:', playbook.git_credential_id);
+        
+        gitForm.setFieldsValue({
+          repo_url: playbook.git_repo_url || '',
+          file_path: playbook.git_file_path || '',
+          filename: playbook.git_filename || '',
+          git_visibility: visibility,
+          git_credential_id: playbook.git_credential_id || ''
+        });
+        
+        // Also update the state to reflect the visibility
+        setGitVisibility(visibility);
+        console.log('🔥 TIMEOUT - STATE SET TO:', visibility);
+      }, 200);
+    }
+    
     setModalVisible(true);
     setCanUploadFiles(true); // Enable file uploads for existing playbooks
     
@@ -447,8 +538,24 @@ const Playbooks = ({ currentUser }) => {
       // Make sure we use the editor content
       const submitValues = {
         ...values,
-        content: editorContent
+        content: editorContent,
+        creation_method: creationMethod
       };
+
+      // Add Git metadata if it's a Git import
+      if (creationMethod === 'git') {
+        const gitValues = gitForm.getFieldsValue();
+        submitValues.git_repo_url = gitValues.repo_url;
+        submitValues.git_file_path = gitValues.file_path || '';
+        submitValues.git_filename = gitValues.filename;
+        submitValues.git_visibility = gitValues.git_visibility || gitVisibility || 'public';
+        submitValues.git_credential_id = gitValues.git_credential_id || '';
+        
+        console.log('🔥 SUBMITTING GIT METADATA:', {
+          git_visibility: submitValues.git_visibility,
+          git_credential_id: submitValues.git_credential_id
+        });
+      }
       
       let savedPlaybook;
       const wasEditing = editingPlaybook && editingPlaybook.id; // Track if we were editing existing
@@ -462,8 +569,13 @@ const Playbooks = ({ currentUser }) => {
         setPlaybookFiles([]);
         setEditingPlaybook(null);
         setCanUploadFiles(false);
+        setTempFiles([]);
         form.resetFields();
+        gitForm.resetFields();
         setEditorContent('');
+        setCreationMethod('manual');
+        setImportedContent('');
+      setGitVisibility('public');
       } else {
         const response = await playbooksAPI.create(submitValues);
         message.success('Playbook created successfully - uploading files...');
@@ -483,6 +595,68 @@ const Playbooks = ({ currentUser }) => {
       fetchPlaybooks();
     } catch (error) {
       message.error(`Failed to ${editingPlaybook?.id ? 'update' : 'create'} playbook`);
+    }
+  };
+
+  // Git import functions
+  const handleGitImport = async (gitValues) => {
+    try {
+      setGitImportLoading(true);
+      
+      // Call the backend to import from Git
+      const response = await fetch('/api/playbooks/git-import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        body: JSON.stringify({
+          repo_url: gitValues.repo_url,
+          file_path: gitValues.file_path,
+          filename: gitValues.filename,
+          git_visibility: gitValues.git_visibility || gitVisibility,
+          git_credential_id: gitValues.git_credential_id
+        })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to import from Git');
+      }
+      
+      const data = await response.json();
+      setImportedContent(data.content);
+      setEditorContent(data.content);
+      form.setFieldsValue({ 
+        content: data.content,
+        git_repo_url: data.repo_url,
+        git_file_path: data.file_path,
+        git_filename: data.filename,
+        git_visibility: data.git_visibility,
+        git_credential_id: data.git_credential_id
+      });
+      
+      message.success('Playbook imported successfully from Git repository');
+    } catch (error) {
+      message.error(`Git import failed: ${error.message}`);
+    } finally {
+      setGitImportLoading(false);
+    }
+  };
+
+  const handleCreationMethodChange = (method) => {
+    setCreationMethod(method);
+    if (method === 'manual') {
+      // Reset to default content when switching back to manual
+      const defaultContent = getDefaultContent(form.getFieldValue('os_type') || 'linux');
+      setEditorContent(defaultContent);
+      form.setFieldsValue({ content: defaultContent });
+      setImportedContent('');
+      setGitVisibility('public');
+    } else {
+      // Clear content when switching to Git import
+      setEditorContent('');
+      form.setFieldsValue({ content: '' });
     }
   };
 
@@ -660,7 +834,12 @@ const Playbooks = ({ currentUser }) => {
           setCanUploadFiles(false);
           setTempFiles([]);
           form.resetFields();
+          gitForm.resetFields();
           setEditorContent('');
+          setCreationMethod('manual');
+          setImportedContent('');
+      setGitVisibility('public');
+          setGitVisibility('public');
         }}
         width={1000}
         footer={null}
@@ -679,6 +858,23 @@ const Playbooks = ({ currentUser }) => {
             ]}
           >
             <Input placeholder="e.g., nginx-setup" />
+          </Form.Item>
+
+          <Form.Item
+            label="Creation Method"
+            name="creation_method"
+            initialValue="manual"
+            rules={[{ required: true, message: 'Please select creation method' }]}
+          >
+            <Select
+              placeholder="Choose how to create the playbook"
+              onChange={handleCreationMethodChange}
+              size="large"
+              value={creationMethod}
+            >
+              <Select.Option value="manual">Manual Creation</Select.Option>
+              <Select.Option value="git">Import from Git</Select.Option>
+            </Select>
           </Form.Item>
 
           <Form.Item
@@ -711,7 +907,128 @@ const Playbooks = ({ currentUser }) => {
             <Input placeholder="Brief description of what this playbook does" />
           </Form.Item>
 
-          {/* File Upload Section */}
+          {/* Git Import Section */}
+          {creationMethod === 'git' && (
+            <>
+              <Divider orientation="left">
+                <Space>
+                  <GithubOutlined />
+                  Git Repository Import
+                </Space>
+              </Divider>
+              
+              <Form
+                form={gitForm}
+                layout="vertical"
+                onFinish={handleGitImport}
+              >
+                <Form.Item
+                  label="Repository URL"
+                  name="repo_url"
+                  rules={[
+                    { required: true, message: 'Please enter repository URL' },
+                    { type: 'url', message: 'Please enter a valid URL' }
+                  ]}
+                >
+                  <Input 
+                    placeholder="https://github.com/username/repository.git"
+                    prefix={<GitlabOutlined />}
+                  />
+                </Form.Item>
+
+                <Form.Item
+                  label="Repository Visibility"
+                  name="git_visibility"
+                  rules={[{ required: true, message: 'Please select repository visibility' }]}
+                  initialValue="public"
+                >
+                  <Select
+                    placeholder="Select repository visibility"
+                    onChange={(value) => setGitVisibility(value)}
+                    value={gitVisibility}
+                    key={`visibility-${editingPlaybook?.id || 'new'}`}
+                  >
+                    <Select.Option value="public">🌐 Public Repository</Select.Option>
+                    <Select.Option value="private">🔒 Private Repository</Select.Option>
+                  </Select>
+                </Form.Item>
+
+                {gitVisibility === 'private' && (
+                  <Form.Item
+                    label="Git Credentials"
+                    name="git_credential_id"
+                    rules={[{ required: true, message: 'Please select git credentials for private repository' }]}
+                  >
+                    <Select
+                      placeholder="Select Git token credentials"
+                      showSearch
+                      optionFilterProp="children"
+                      filterOption={(input, option) =>
+                        option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
+                      }
+                      key={`credentials-${editingPlaybook?.id || 'new'}`}
+                    >
+                      {credentials
+                        .filter(cred => cred.credential_type === 'git_token')
+                        .map(cred => (
+                          <Select.Option key={cred.id} value={cred.id}>
+                            🔑 {cred.name}
+                          </Select.Option>
+                        ))
+                      }
+                    </Select>
+                  </Form.Item>
+                )}
+
+                <Row gutter={16}>
+                  <Col span={16}>
+                    <Form.Item
+                      label="File Path (directory path within repo)"
+                      name="file_path"
+                      rules={[{ required: true, message: 'Please enter file path' }]}
+                    >
+                      <Input 
+                        placeholder="playbooks/ or ansible/roles/common/"
+                        prefix={<FileOutlined />}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item
+                      label="Filename"
+                      name="filename"
+                      rules={[{ required: true, message: 'Please enter filename' }]}
+                    >
+                      <Input 
+                        placeholder="site.yml"
+                        suffix=".yml"
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                <Form.Item>
+                  <Button 
+                    type="primary" 
+                    loading={gitImportLoading}
+                    icon={<DownloadOutlined />}
+                    onClick={() => {
+                      gitForm.validateFields().then(values => {
+                        handleGitImport(values);
+                      }).catch(err => {
+                        console.log('Validation failed:', err);
+                      });
+                    }}
+                  >
+                    Import Playbook
+                  </Button>
+                </Form.Item>
+              </Form>
+            </>
+          )}
+
+          {/* File Upload Section - Only for Manual Creation */}
+          {creationMethod === 'manual' && (
           <>
             <Divider orientation="left">
               <Space>
@@ -839,9 +1156,10 @@ const Playbooks = ({ currentUser }) => {
               )}
             </div>
           </>
+          )}
 
           <Form.Item
-            label="Playbook Content (YAML)"
+            label={creationMethod === 'git' ? "Imported Playbook Preview (YAML)" : "Playbook Content (YAML)"}
             name="content"
             rules={[{ required: true, message: 'Please enter playbook content' }]}
           >
@@ -972,8 +1290,13 @@ const Playbooks = ({ currentUser }) => {
                   setPlaybookFiles([]);
                   setEditingPlaybook(null);
                   setCanUploadFiles(false);
+                  setTempFiles([]);
                   form.resetFields();
+                  gitForm.resetFields();
                   setEditorContent('');
+                  setCreationMethod('manual');
+                  setImportedContent('');
+      setGitVisibility('public');
                 }}>
                   Done
                 </Button>
@@ -983,8 +1306,13 @@ const Playbooks = ({ currentUser }) => {
                 setPlaybookFiles([]);
                 setEditingPlaybook(null);
                 setCanUploadFiles(false);
+                setTempFiles([]);
                 form.resetFields();
+                gitForm.resetFields();
                 setEditorContent('');
+                setCreationMethod('manual');
+                setImportedContent('');
+      setGitVisibility('public');
               }}>
                 Cancel
               </Button>

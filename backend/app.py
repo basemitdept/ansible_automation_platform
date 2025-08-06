@@ -490,7 +490,13 @@ def create_playbook():
                 content=data['content'],
                 description=data.get('description', ''),
                 variables=variables_json,
-                os_type=data.get('os_type', 'linux')
+                os_type=data.get('os_type', 'linux'),
+                creation_method=data.get('creation_method', 'manual'),
+                git_repo_url=data.get('git_repo_url'),
+                git_file_path=data.get('git_file_path'),
+                git_filename=data.get('git_filename'),
+                git_visibility=data.get('git_visibility', 'public'),
+                git_credential_id=data.get('git_credential_id')
             )
             print(f"📄 Created playbook object: {playbook.name}")
         except Exception as obj_error:
@@ -554,6 +560,8 @@ def update_playbook(playbook_id):
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/playbooks/<playbook_id>', methods=['DELETE'])
+@jwt_required()
+@require_permission('delete_playbook')
 def delete_playbook(playbook_id):
     try:
         playbook = Playbook.query.get_or_404(playbook_id)
@@ -614,6 +622,116 @@ def delete_playbook(playbook_id):
         print(f"Error deleting playbook: {str(e)}")
         db.session.rollback()
         return jsonify({'error': f'Failed to delete playbook: {str(e)}'}), 500
+
+# Git Import endpoint
+@app.route('/api/playbooks/git-import', methods=['POST'])
+@jwt_required()
+def git_import_playbook():
+    """Import a playbook from a Git repository"""
+    try:
+        data = request.json
+        print(f"📦 Git import request: {data}")
+        
+        # Validate required fields
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        repo_url = data.get('repo_url')
+        file_path = data.get('file_path', '')
+        filename = data.get('filename')
+        git_visibility = data.get('git_visibility', 'public')
+        git_credential_id = data.get('git_credential_id')
+        
+        if not repo_url:
+            return jsonify({'error': 'Repository URL is required'}), 400
+        if not filename:
+            return jsonify({'error': 'Filename is required'}), 400
+        if git_visibility == 'private' and not git_credential_id:
+            return jsonify({'error': 'Git credential is required for private repositories'}), 400
+        
+        # Add .yml extension if not present
+        if not filename.endswith('.yml') and not filename.endswith('.yaml'):
+            filename += '.yml'
+        
+        # Import git module
+        import git
+        import tempfile
+        import shutil
+        import os
+        
+        # Handle authentication for private repositories
+        auth_repo_url = repo_url
+        if git_visibility == 'private' and git_credential_id:
+            credential = Credential.query.get(git_credential_id)
+            if not credential or credential.credential_type != 'git_token':
+                return jsonify({'error': 'Invalid Git credential provided'}), 400
+            
+            # Inject token into URL for authentication
+            if repo_url.startswith('https://github.com/'):
+                # For GitHub, use simple token format
+                auth_repo_url = repo_url.replace('https://github.com/', f'https://{credential.token}@github.com/')
+            elif repo_url.startswith('https://gitlab.com/'):
+                auth_repo_url = repo_url.replace('https://gitlab.com/', f'https://oauth2:{credential.token}@gitlab.com/')
+            else:
+                # Generic Git hosting with token
+                auth_repo_url = repo_url.replace('https://', f'https://{credential.token}@')
+        
+        # Create a temporary directory for cloning
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                print(f"🔄 Cloning repository {repo_url} to {temp_dir}")
+                
+                # Clone the repository
+                repo = git.Repo.clone_from(auth_repo_url, temp_dir, depth=1)
+                print(f"✅ Repository cloned successfully")
+                
+                # Construct full file path
+                if file_path:
+                    # Remove leading/trailing slashes and ensure proper path
+                    file_path = file_path.strip('/\\')
+                    full_path = os.path.join(temp_dir, file_path, filename)
+                else:
+                    full_path = os.path.join(temp_dir, filename)
+                
+                print(f"📁 Looking for file at: {full_path}")
+                
+                # Check if file exists
+                if not os.path.exists(full_path):
+                    return jsonify({'error': f'File not found: {file_path}/{filename}'}), 404
+                
+                # Read the file content
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                print(f"📄 File content loaded, length: {len(content)} characters")
+                
+                # Validate that it's a YAML file (basic check)
+                try:
+                    import yaml
+                    yaml.safe_load(content)
+                    print(f"✅ YAML validation passed")
+                except yaml.YAMLError as e:
+                    return jsonify({'error': f'Invalid YAML content: {str(e)}'}), 400
+                
+                return jsonify({
+                    'content': content,
+                    'filename': filename,
+                    'repo_url': repo_url,
+                    'file_path': file_path,
+                    'git_visibility': git_visibility,
+                    'git_credential_id': git_credential_id
+                }), 200
+                
+            except git.exc.GitCommandError as e:
+                print(f"❌ Git error: {e}")
+                return jsonify({'error': f'Git error: {str(e)}'}), 400
+            except Exception as e:
+                print(f"❌ Error during git import: {e}")
+                return jsonify({'error': f'Import error: {str(e)}'}), 500
+                
+    except Exception as e:
+        print(f"❌ Unexpected error in git_import_playbook: {e}")
+        return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
 
 # Playbook File routes
 @app.route('/api/playbooks/<playbook_id>/files', methods=['GET'])
@@ -1113,6 +1231,8 @@ def update_host(host_id):
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/hosts/<host_id>', methods=['DELETE'])
+@jwt_required()
+@require_permission('delete_host')
 def delete_host(host_id):
     try:
         host = Host.query.get_or_404(host_id)
@@ -1210,18 +1330,29 @@ def create_credential():
     try:
         data = request.get_json()
         
-        # Validate required fields
-        if not data.get('name') or not data.get('username') or not data.get('password'):
-            return jsonify({'error': 'Name, username, and password are required'}), 400
+        credential_type = data.get('credential_type', 'ssh')
         
-        # If this is set as default, unset other defaults
+        # Validate required fields based on credential type
+        if not data.get('name'):
+            return jsonify({'error': 'Name is required'}), 400
+            
+        if credential_type == 'ssh':
+            if not data.get('username') or not data.get('password'):
+                return jsonify({'error': 'Username and password are required for SSH credentials'}), 400
+        elif credential_type == 'git_token':
+            if not data.get('token'):
+                return jsonify({'error': 'Token is required for Git token credentials'}), 400
+        
+        # If this is set as default, unset other defaults of the same type
         if data.get('is_default'):
-            Credential.query.filter_by(is_default=True).update({'is_default': False})
+            Credential.query.filter_by(is_default=True, credential_type=credential_type).update({'is_default': False})
         
         credential = Credential(
             name=data['name'],
-            username=data['username'],
-            password=data['password'],  # In production, this should be encrypted
+            credential_type=credential_type,
+            username=data.get('username'),
+            password=data.get('password'),  # In production, this should be encrypted
+            token=data.get('token'),  # Git token
             description=data.get('description', ''),
             is_default=data.get('is_default', False)
         )
@@ -1240,14 +1371,17 @@ def update_credential(credential_id):
         credential = Credential.query.get_or_404(credential_id)
         data = request.get_json()
         
-        # If this is set as default, unset other defaults
+        # If this is set as default, unset other defaults of the same type
         if data.get('is_default') and not credential.is_default:
-            Credential.query.filter_by(is_default=True).update({'is_default': False})
+            Credential.query.filter_by(is_default=True, credential_type=credential.credential_type).update({'is_default': False})
         
         credential.name = data.get('name', credential.name)
+        credential.credential_type = data.get('credential_type', credential.credential_type)
         credential.username = data.get('username', credential.username)
         if data.get('password'):  # Only update password if provided
             credential.password = data['password']
+        if data.get('token'):  # Only update token if provided
+            credential.token = data['token']
         credential.description = data.get('description', credential.description)
         credential.is_default = data.get('is_default', credential.is_default)
         
@@ -1311,7 +1445,8 @@ def delete_history(history_id):
 @app.route('/api/execute', methods=['POST'])
 @jwt_required()
 def execute_playbook():
-    print(f"🔍 Execute endpoint called")
+    print(f"🎯🎯🎯 EXECUTE ENDPOINT CALLED - PROCESSING PLAYBOOK EXECUTION REQUEST 🎯🎯🎯")
+    print(f"🎯 REQUEST DATA: {request.get_json()}")
     
     # Get current user (handle case where users table doesn't exist)
     current_user_id = get_jwt_identity()
@@ -1340,6 +1475,7 @@ def execute_playbook():
     try:
         data = request.json
         playbook_id = data['playbook_id']
+        print(f"🎯 REQUESTED PLAYBOOK ID: {playbook_id}")
         host_ids = data.get('host_ids', [])  # Support multiple hosts
         host_id = data.get('host_id')  # Support single host for backward compatibility
         username = data.get('username')
@@ -1357,6 +1493,7 @@ def execute_playbook():
     
     try:
         playbook = Playbook.query.get_or_404(playbook_id)
+        print(f"📖 LOADED PLAYBOOK: {playbook.id} - {playbook.name} (method: {playbook.creation_method})")
     except Exception as e:
         return jsonify({'error': f'Playbook not found: {str(e)}'}), 404
     
@@ -1419,6 +1556,90 @@ def execute_playbook():
         db.session.rollback()
         return jsonify({'error': f'Failed to create task: {str(e)}'}), 500
     
+    # Check if playbook was imported from Git and pull latest version BEFORE execution
+    print(f"🔍 CHECKING PLAYBOOK: creation_method='{playbook.creation_method}', git_repo_url='{playbook.git_repo_url}'")
+    if playbook.creation_method == 'git' and playbook.git_repo_url:
+        print(f"🔄 DOING EXACTLY WHAT IMPORT BUTTON DOES - Sync from Git and save to physical file")
+        try:
+            # Import Git-related modules  
+            import git
+            import tempfile
+            import yaml
+            from datetime import datetime
+            
+            # Create a temporary directory for cloning
+            # Handle authentication for private repositories
+            auth_repo_url = playbook.git_repo_url
+            if playbook.git_visibility == 'private' and playbook.git_credential_id:
+                credential = Credential.query.get(playbook.git_credential_id)
+                if credential and credential.credential_type == 'git_token':
+                    # Inject token into URL for authentication
+                    if playbook.git_repo_url.startswith('https://github.com/'):
+                        # For GitHub, use simple token format
+                        auth_repo_url = playbook.git_repo_url.replace('https://github.com/', f'https://{credential.token}@github.com/')
+                    elif playbook.git_repo_url.startswith('https://gitlab.com/'):
+                        auth_repo_url = playbook.git_repo_url.replace('https://gitlab.com/', f'https://oauth2:{credential.token}@gitlab.com/')
+                    else:
+                        # Generic Git hosting with token
+                        auth_repo_url = playbook.git_repo_url.replace('https://', f'https://{credential.token}@')
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                print(f"🔄 Cloning repository {playbook.git_repo_url} to {temp_dir}")
+                
+                # Clone the repository
+                repo = git.Repo.clone_from(auth_repo_url, temp_dir, depth=1)
+                print(f"✅ Repository cloned successfully")
+                
+                # Construct full file path
+                if playbook.git_file_path and playbook.git_file_path.strip():
+                    file_path = playbook.git_file_path.strip('/\\')
+                    full_path = os.path.join(temp_dir, file_path, playbook.git_filename)
+                else:
+                    full_path = os.path.join(temp_dir, playbook.git_filename)
+                
+                print(f"📁 Looking for file at: {full_path}")
+                
+                # Read the file content
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    latest_content = f.read()
+                
+                print(f"📄 File content loaded, length: {len(latest_content)} characters")
+                
+                # Validate YAML
+                yaml.safe_load(latest_content)
+                print(f"✅ YAML validation passed")
+                
+                # CRITICAL: Save to physical file EXACTLY like Import button does
+                physical_file_path = os.path.join(PLAYBOOKS_DIR, f"{playbook.name}.yml")
+                print(f"💾 Saving latest content to physical file: {physical_file_path}")
+                
+                os.makedirs(PLAYBOOKS_DIR, exist_ok=True)
+                with open(physical_file_path, 'w', encoding='utf-8') as f:
+                    f.write(latest_content)
+                print(f"✅ PHYSICAL FILE UPDATED SUCCESSFULLY!")
+                
+                # Also update database
+                playbook.content = latest_content
+                playbook.updated_at = datetime.utcnow()
+                db.session.commit()
+                print(f"✅ Database updated too")
+                
+                socketio.emit('task_update', {
+                    'task_id': str(task.id),
+                    'message': f'✅ Synced latest version from Git and saved to {playbook.name}.yml'
+                })
+                
+        except Exception as e:
+            print(f"❌ Git sync failed: {e}")
+            socketio.emit('task_update', {
+                'task_id': str(task.id),
+                'message': f'Git sync failed: {e}'
+            })
+    else:
+        print(f"🔍 SKIPPING GIT SYNC: Not a Git-imported playbook (method='{playbook.creation_method}', repo='{playbook.git_repo_url}')")
+
+    print(f"🔄 GIT SYNC COMPLETED - Proceeding to execution phase")
+
     # Execute the playbook against all hosts in a single run
     try:
         # Update task status to running (started_at will be set when execution actually starts)
@@ -1431,15 +1652,28 @@ def execute_playbook():
             'status': 'running'
         })
         
-        # WebSocket test removed - connection confirmed working
+        # Ensure we have the latest playbook content by refreshing from database AFTER Git sync
+        db.session.refresh(playbook)
+        
+        # Force a fresh query to get the absolute latest content from database AFTER Git sync
+        fresh_playbook = db.session.query(Playbook).filter_by(id=playbook_id).first()
+        if fresh_playbook:
+            playbook = fresh_playbook
+            print(f"🔄 FORCE REFRESHED PLAYBOOK FROM DATABASE AFTER GIT SYNC")
         
         # Convert hosts to dictionaries to avoid session issues in thread
         host_data = [host.to_dict() for host in hosts] if hosts else []
+        
+        # Create playbook_data AFTER Git sync to ensure latest content
         playbook_data = {
             'id': playbook.id,
             'name': playbook.name,
             'content': playbook.content
         }
+        
+        print(f"🚀 STARTING EXECUTION OF PLAYBOOK: {playbook_data['id']} - {playbook_data['name']}")
+        print(f"🚀 PLAYBOOK CONTENT LENGTH: {len(playbook_data['content'])} characters")
+        print(f"🚀 PLAYBOOK CONTENT FIRST 100 CHARS: {playbook_data['content'][:100]}...")
         
         thread = threading.Thread(
             target=run_ansible_playbook_multi_host_safe,
@@ -1916,7 +2150,21 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
         playbook_path = os.path.join(PLAYBOOKS_DIR, f"{playbook.name}.yml")
         print(f"Playbook path: {playbook_path}")
         
-        # Check if playbook file exists
+        # CRITICAL: Always write the current playbook content to the file before execution
+        # Write the playbook content to file before execution
+        print(f"🔄 Writing current playbook content to file before execution")
+        print(f"🔄 Content length: {len(playbook.content)} characters")
+        print(f"🔄 Content preview (first 100 chars): {playbook.content[:100]}...")
+        try:
+            os.makedirs(PLAYBOOKS_DIR, exist_ok=True)
+            with open(playbook_path, 'w', encoding='utf-8') as f:
+                f.write(playbook.content)
+            print(f"✅ Playbook file written successfully: {playbook_path}")
+        except Exception as write_error:
+            print(f"❌ Failed to write playbook file: {write_error}")
+            raise Exception(f"Failed to write playbook file: {write_error}")
+        
+        # Check if playbook file exists (should always exist now)
         if not os.path.exists(playbook_path):
             raise Exception(f"Playbook file not found: {playbook_path}")
         
@@ -3179,6 +3427,9 @@ def run_ansible_playbook_multi_host_safe(task_id, playbook_data, host_data, user
     """
     Safe wrapper that recreates objects from data to avoid session issues.
     """
+    # Log the content being used for execution
+    print(f"🔄 EXECUTION THREAD: Starting execution with content length {len(playbook_data['content'])} chars")
+    
     # Create simple objects from data
     class SimplePlaybook:
         def __init__(self, data):
@@ -3378,7 +3629,21 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
         playbook_path = os.path.join(PLAYBOOKS_DIR, f"{playbook.name}.yml")
         print(f"Playbook path: {playbook_path}")
         
-        # Check if playbook file exists
+        # CRITICAL: Always write the current playbook content to the file before execution
+        # Write the playbook content to file before execution
+        print(f"🔄 Writing current playbook content to file before execution")
+        print(f"🔄 Content length: {len(playbook.content)} characters")
+        print(f"🔄 Content preview (first 100 chars): {playbook.content[:100]}...")
+        try:
+            os.makedirs(PLAYBOOKS_DIR, exist_ok=True)
+            with open(playbook_path, 'w', encoding='utf-8') as f:
+                f.write(playbook.content)
+            print(f"✅ Playbook file written successfully: {playbook_path}")
+        except Exception as write_error:
+            print(f"❌ Failed to write playbook file: {write_error}")
+            raise Exception(f"Failed to write playbook file: {write_error}")
+        
+        # Check if playbook file exists (should always exist now)
         if not os.path.exists(playbook_path):
             raise Exception(f"Playbook file not found: {playbook_path}")
         
@@ -3963,7 +4228,21 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
         playbook_path = os.path.join(PLAYBOOKS_DIR, f"{playbook.name}.yml")
         print(f"Playbook path: {playbook_path}")
         
-        # Check if playbook file exists
+        # CRITICAL: Always write the current playbook content to the file before execution
+        # Write the playbook content to file before execution
+        print(f"🔄 Writing current playbook content to file before execution")
+        print(f"🔄 Content length: {len(playbook.content)} characters")
+        print(f"🔄 Content preview (first 100 chars): {playbook.content[:100]}...")
+        try:
+            os.makedirs(PLAYBOOKS_DIR, exist_ok=True)
+            with open(playbook_path, 'w', encoding='utf-8') as f:
+                f.write(playbook.content)
+            print(f"✅ Playbook file written successfully: {playbook_path}")
+        except Exception as write_error:
+            print(f"❌ Failed to write playbook file: {write_error}")
+            raise Exception(f"Failed to write playbook file: {write_error}")
+        
+        # Check if playbook file exists (should always exist now)
         if not os.path.exists(playbook_path):
             raise Exception(f"Playbook file not found: {playbook_path}")
         

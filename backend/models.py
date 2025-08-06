@@ -51,6 +51,13 @@ class Playbook(db.Model):
     description = db.Column(db.Text)
     variables = db.Column(db.Text)  # JSON string storing variable definitions
     os_type = db.Column(db.String(50), nullable=False, default='linux')  # OS type column
+    # Git import metadata
+    git_repo_url = db.Column(db.String(500))  # Git repository URL
+    git_file_path = db.Column(db.String(500))  # File path within repo
+    git_filename = db.Column(db.String(255))  # Filename in repo
+    git_visibility = db.Column(db.String(20), default='public')  # 'public' or 'private'
+    git_credential_id = db.Column(db.String(36))  # Reference to git token credential
+    creation_method = db.Column(db.String(50), default='manual')  # 'manual' or 'git'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -71,6 +78,12 @@ class Playbook(db.Model):
             'description': self.description,
             'variables': variables_data,
             'os_type': self.os_type,
+            'creation_method': self.creation_method or 'manual',
+            'git_repo_url': self.git_repo_url,
+            'git_file_path': self.git_file_path,
+            'git_filename': self.git_filename,
+            'git_visibility': self.git_visibility,
+            'git_credential_id': self.git_credential_id,
             'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z'
         }
@@ -253,8 +266,10 @@ class Credential(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(100), nullable=False)  # Display name for the credential
-    username = db.Column(db.String(100), nullable=False)  # SSH username
-    password = db.Column(db.String(255), nullable=False)  # SSH password (should be encrypted in production)
+    credential_type = db.Column(db.String(50), nullable=False, default='ssh')  # 'ssh' or 'git_token'
+    username = db.Column(db.String(100), nullable=True)  # SSH username (not required for git tokens)
+    password = db.Column(db.String(255), nullable=True)  # SSH password or Git token (should be encrypted in production)
+    token = db.Column(db.String(500), nullable=True)  # Git token field
     description = db.Column(db.Text)  # Optional description
     is_default = db.Column(db.Boolean, default=False)  # Mark as default credential
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -264,6 +279,7 @@ class Credential(db.Model):
         return {
             'id': str(self.id),
             'name': self.name,
+            'credential_type': getattr(self, 'credential_type', 'ssh'),
             'username': self.username,
             'description': self.description,
             'is_default': self.is_default,
