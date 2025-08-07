@@ -193,7 +193,7 @@ const Playbooks = ({ currentUser }) => {
       setFilteredPlaybooks(playbooks);
     } else {
       const filtered = playbooks.filter(playbook =>
-        playbook.name.toLowerCase().includes(value.toLowerCase()) ||
+        (playbook.name && playbook.name.toLowerCase().includes(value.toLowerCase())) ||
         (playbook.description && playbook.description.toLowerCase().includes(value.toLowerCase()))
       );
       // Keep sort order (newest first) after filtering

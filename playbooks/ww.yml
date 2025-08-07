@@ -1,5 +1,5 @@
 - name: ggg
   hosts: all
   tasks:
-  - name: gggsdfvdfsvsfv
-    command: hostname
+  - name: alaraj-alarajlekfhjlkwajehflkwhjef
+    command: echo basemalarajasdgsdgdg

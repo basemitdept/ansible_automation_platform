@@ -34,7 +34,8 @@ import {
   ReloadOutlined,
   PauseCircleOutlined,
   RedoOutlined,
-  ApiOutlined
+  ApiOutlined,
+  StopOutlined
 } from '@ant-design/icons';
 import { historyAPI, artifactsAPI, tasksAPI, credentialsAPI } from '../services/api';
 import moment from 'moment';
@@ -47,11 +48,13 @@ const { Panel } = Collapse;
 
 const History = () => {
   const [history, setHistory] = useState([]);
+  const [filteredHistory, setFilteredHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [outputModalVisible, setOutputModalVisible] = useState(false);
   const [selectedExecution, setSelectedExecution] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
+  const [searchText, setSearchText] = useState('');
   const autoRefresh = true; // Always auto refresh in background
   const [lastRefresh, setLastRefresh] = useState(null);
   const intervalRef = useRef(null);
@@ -123,13 +126,12 @@ const History = () => {
     }
     try {
       const response = await historyAPI.getAll();
-      // Sort by newest first (started_at or created_at descending)
-      const sortedHistory = response.data.sort((a, b) => {
-        const dateA = new Date(a.started_at || a.created_at);
-        const dateB = new Date(b.started_at || b.created_at);
-        return dateB - dateA;
-      });
-      setHistory(sortedHistory);
+      // Handle new paginated API response format
+      const historyData = response.data.data || response.data; // Support both new and old format
+      
+      // Data is already sorted by newest first from the API, no need to re-sort
+      setHistory(historyData);
+      setFilteredHistory(historyData);
       setLastRefresh(new Date());
     } catch (error) {
       console.error('Failed to fetch execution history');
@@ -138,6 +140,63 @@ const History = () => {
       if (isManualRefresh) {
         setLoading(false);
       }
+    }
+  };
+
+  const handleSearch = (value) => {
+    setSearchText(value);
+    if (!value) {
+      setFilteredHistory(history);
+    } else {
+      const filtered = history.filter(execution => {
+        const searchValue = value.toLowerCase();
+        
+        // Search in basic fields
+        if ((execution.playbook_name && execution.playbook_name.toLowerCase().includes(searchValue)) ||
+            (execution.status && execution.status.toLowerCase().includes(searchValue)) ||
+            (execution.executed_by && execution.executed_by.toLowerCase().includes(searchValue)) ||
+            (execution.execution_id && execution.execution_id.toLowerCase().includes(searchValue)) ||
+            (execution.serial_id && execution.serial_id.toString().includes(searchValue))) {
+          return true;
+        }
+        
+        // Search in playbook name (nested)
+        if (execution.playbook && execution.playbook.name && 
+            execution.playbook.name.toLowerCase().includes(searchValue)) {
+          return true;
+        }
+        
+        // Search in user information
+        if (execution.user && execution.user.username && 
+            execution.user.username.toLowerCase().includes(searchValue)) {
+          return true;
+        }
+        
+        // Search in webhook information
+        if (execution.webhook && execution.webhook.name && 
+            execution.webhook.name.toLowerCase().includes(searchValue)) {
+          return true;
+        }
+        
+        // Search in hosts information
+        const hosts = execution.hosts || [execution.host];
+        const validHosts = hosts.filter(host => host);
+        for (const host of validHosts) {
+          if ((host.name && host.name.toLowerCase().includes(searchValue)) ||
+              (host.hostname && host.hostname.toLowerCase().includes(searchValue))) {
+            return true;
+          }
+        }
+        
+        return false;
+      });
+      // Keep sort order (newest first) after filtering
+      const sortedFiltered = filtered.sort((a, b) => {
+        const dateA = new Date(a.started_at || a.created_at);
+        const dateB = new Date(b.started_at || b.created_at);
+        return dateB - dateA;
+      });
+      setFilteredHistory(sortedFiltered);
     }
   };
 
@@ -151,6 +210,8 @@ const History = () => {
         return <CheckCircleOutlined style={{ color: '#fa8c16' }} />;
       case 'failed':
         return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />;
+      case 'terminated':
+        return <StopOutlined style={{ color: '#ff7875' }} />;
       default:
         return <PlayCircleOutlined />;
     }
@@ -161,12 +222,19 @@ const History = () => {
       running: 'processing',
       completed: 'success',
       partial: 'orange',
-      failed: 'error'
+      failed: 'error',
+      terminated: 'volcano'
+    };
+    
+    const statusText = {
+      partial: 'PARTIAL SUCCESS',
+      terminated: 'TERMINATED',
+      default: (status) => status.toUpperCase()
     };
     
     return (
       <Tag color={colors[status]} icon={getStatusIcon(status)}>
-        {status === 'partial' ? 'PARTIAL SUCCESS' : status.toUpperCase()}
+        {statusText[status] || statusText.default(status)}
       </Tag>
     );
   };
@@ -426,6 +494,7 @@ const History = () => {
         { text: 'Completed', value: 'completed' },
         { text: 'Partial Success', value: 'partial' },
         { text: 'Failed', value: 'failed' },
+        { text: 'Terminated', value: 'terminated' },
         { text: 'Running', value: 'running' },
       ],
       onFilter: (value, record) => record.status === value,
@@ -539,15 +608,24 @@ const History = () => {
           </Space>
         }
         extra={
-          <Button onClick={() => fetchHistory(true)} loading={loading} icon={<ReloadOutlined />}>
-            Refresh
-          </Button>
+          <Space>
+            <Input.Search
+              placeholder="Search executions..."
+              value={searchText}
+              onChange={(e) => handleSearch(e.target.value)}
+              style={{ width: 300 }}
+              allowClear
+            />
+            <Button onClick={() => fetchHistory(true)} loading={loading} icon={<ReloadOutlined />}>
+              Refresh
+            </Button>
+          </Space>
         }
         className="card-container"
       >
         <Table
           columns={columns}
-          dataSource={history}
+          dataSource={filteredHistory}
           rowKey="id"
           loading={loading}
           pagination={{

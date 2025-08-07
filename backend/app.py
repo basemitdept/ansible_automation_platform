@@ -48,6 +48,9 @@ os.makedirs(FILES_DIR, exist_ok=True)
 
 # Configure file upload settings
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+
+# Global dictionary to track running processes by task ID
+running_processes = {}
 ALLOWED_EXTENSIONS = {
     'txt', 'py', 'sh', 'bash', 'ps1', 'bat', 'cmd', 'sql', 'json', 'xml', 'yml', 'yaml',
     'conf', 'config', 'ini', 'properties', 'service', 'timer', 'socket', 'mount',
@@ -1271,6 +1274,206 @@ def delete_host(host_id):
         db.session.rollback()
         return jsonify({'error': f'Failed to delete host: {str(e)}'}), 500
 
+# Helper function to terminate running task processes
+def terminate_task_process(task_id):
+    """Terminate a running process associated with a task ID"""
+    try:
+        if task_id in running_processes:
+            process = running_processes[task_id]
+            
+            # Check if process is still running
+            if process.poll() is None:
+                print(f"🚨 Terminating process for task {task_id} (PID: {process.pid})")
+                
+                # Import psutil for better process management
+                import psutil
+                
+                try:
+                    # Get the parent process and all its children
+                    parent_pid = process.pid
+                    parent = psutil.Process(parent_pid)
+                    children = parent.children(recursive=True)
+                    
+                    print(f"🔍 Found {len(children)} child processes to terminate")
+                    
+                    # Terminate children first
+                    for child in children:
+                        try:
+                            print(f"🚨 Terminating child process {child.pid}")
+                            child.terminate()
+                        except psutil.NoSuchProcess:
+                            pass
+                    
+                    # Terminate parent process
+                    parent.terminate()
+                    
+                    # Wait a bit for graceful termination
+                    try:
+                        parent.wait(timeout=5)
+                        print(f"✅ Process {parent_pid} terminated gracefully")
+                    except psutil.TimeoutExpired:
+                        # Force kill if still running
+                        print(f"🚨 Force killing process {parent_pid} and children")
+                        for child in children:
+                            try:
+                                child.kill()
+                            except psutil.NoSuchProcess:
+                                pass
+                        parent.kill()
+                        print(f"✅ Process {parent_pid} force killed")
+                        
+                except psutil.NoSuchProcess:
+                    print(f"⚠️ Process {process.pid} no longer exists")
+                except Exception as e:
+                    print(f"❌ Error terminating process {process.pid}: {e}")
+                    return False
+                
+                # Remove from tracking
+                del running_processes[task_id]
+                return True
+            else:
+                print(f"⚠️ Process for task {task_id} already finished")
+                # Clean up tracking
+                del running_processes[task_id]
+                return False
+        else:
+            print(f"⚠️ No tracked process found for task {task_id}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error in terminate_task_process: {e}")
+        return False
+
+# Helper function to check if execution history already exists for a task
+def task_history_exists(task_id):
+    """Check if execution history already exists for a task"""
+    # Check by task timing since we don't have a direct task_id foreign key
+    task = Task.query.get(task_id)
+    if not task:
+        return False
+    
+    # Check if any execution history exists for this playbook and timing
+    existing = ExecutionHistory.query.filter_by(
+        playbook_id=task.playbook_id,
+        started_at=task.started_at
+    ).first()
+    
+    return existing is not None
+
+# Helper function to create execution history for terminated tasks
+def create_terminated_task_history(task):
+    """Create execution history record for a terminated task"""
+    try:
+        import json
+        print(f"🔍 Creating execution history for terminated task {task.id}")
+        
+        # Get task details
+        playbook = task.playbook
+        if not playbook:
+            print(f"⚠️ No playbook found for terminated task {task.id}")
+            return
+        
+        print(f"📝 Found playbook: {playbook.name} (ID: {playbook.id})")
+        
+        # Build host list for history
+        host_list_json = "[]"  # Default to empty array
+        print(f"📝 Task host_list: {task.host_list}")
+        print(f"📝 Task host_id: {task.host_id}")
+        
+        if task.host_list:
+            # Multi-host task
+            try:
+                host_list_data = json.loads(task.host_list)
+                host_list_json = task.host_list
+                print(f"📝 Using multi-host list with {len(host_list_data)} hosts")
+            except json.JSONDecodeError:
+                print(f"⚠️ Invalid host_list JSON for task {task.id}")
+                host_list_json = "[]"
+        elif task.host:
+            # Single host task
+            try:
+                host_list_json = json.dumps([task.host.to_dict()])
+                print(f"📝 Using single host: {task.host.name}")
+            except Exception as e:
+                print(f"⚠️ Error converting host to dict: {e}")
+                host_list_json = json.dumps([{"name": task.host.name, "hostname": task.host.hostname}])
+        else:
+            # No hosts
+            print(f"📝 No hosts found for task {task.id}")
+            host_list_json = "[]"
+        
+        # Prepare output with termination message
+        termination_message = "\n=== TASK TERMINATED BY USER ===\n"
+        if task.output:
+            combined_output = task.output + termination_message
+        else:
+            combined_output = termination_message + "No output captured before termination."
+        
+        # Prepare error output
+        termination_error = "Task was manually terminated by user."
+        if task.error_output and task.error_output != 'Task terminated by user':
+            combined_error = task.error_output + "\n" + termination_error
+        else:
+            combined_error = termination_error
+        
+        # Ensure we have proper timestamps
+        started_at = task.started_at or datetime.utcnow()
+        finished_at = task.finished_at or datetime.utcnow()
+        
+        # Create execution history record
+        history = ExecutionHistory(
+            playbook_id=playbook.id,
+            host_id=task.host_id,  # May be None for multi-host tasks
+            user_id=task.user_id,
+            status='terminated',  # Use 'terminated' status instead of 'failed'
+            started_at=started_at,
+            finished_at=finished_at,
+            output=combined_output,
+            error_output=combined_error,
+            username=None,  # Will be set from user relationship
+            host_list=host_list_json,
+            webhook_id=None  # Explicitly set to None since task.webhook_id is virtual
+        )
+        
+        print(f"📝 About to create execution history with status: {history.status}")
+        print(f"📝 History started_at: {history.started_at}, finished_at: {history.finished_at}")
+        
+        db.session.add(history)
+        db.session.commit()
+        print(f"✅ Created execution history record for terminated task {task.id} with ID: {history.id}")
+        
+    except Exception as e:
+        print(f"❌ Error creating execution history for terminated task {task.id}: {e}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
+        db.session.rollback()
+
+# DEBUG: Temporary endpoint to test execution history creation
+@app.route('/api/debug/test-history/<task_id>', methods=['POST'])
+def test_execution_history(task_id):
+    try:
+        task = Task.query.get(task_id)
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+        
+        print(f"🧪 Testing execution history creation for task {task_id}")
+        
+        # Update task status like termination would
+        task.status = 'failed'
+        task.finished_at = datetime.utcnow()
+        task.error_output = 'TEST: Task terminated by user'
+        db.session.commit()
+        
+        # Test the history creation function
+        create_terminated_task_history(task)
+        
+        return jsonify({'message': 'Test execution history created successfully'})
+    except Exception as e:
+        print(f"❌ Test error: {e}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
 # Task routes
 @app.route('/api/tasks', methods=['GET'])
 def get_tasks():
@@ -1289,12 +1492,52 @@ def delete_task(task_id):
         if not task:
             return jsonify({'error': 'Task not found'}), 404
         
+        # Always create execution history for tasks that have started
+        terminated_task = False
+        if task.status in ['running', 'pending']:
+            terminated = terminate_task_process(task_id)
+            if terminated:
+                print(f"✅ Terminated running process for task {task_id}")
+                terminated_task = True
+            else:
+                print(f"⚠️ Could not terminate process for task {task_id} (process may have already finished)")
+                # Still mark as terminated since user requested termination
+                terminated_task = True
+        
+        # If task was running/pending, create execution history before deletion
+        if task.status in ['running', 'pending'] or task.started_at:
+            print(f"📝 Creating execution history for task {task_id} with status {task.status}")
+            
+            # Update task status to failed due to termination
+            task.status = 'failed'
+            if not task.finished_at:
+                task.finished_at = datetime.utcnow()
+            task.error_output = 'Task terminated by user'
+            
+            # Commit task updates first
+            db.session.commit()
+            print(f"📝 Task {task_id} status updated to failed, creating execution history...")
+            
+            # Create execution history record for terminated task
+            create_terminated_task_history(task)
+            
+            # Emit status update
+            if terminated_task:
+                socketio.emit('task_update', {
+                    'task_id': str(task_id),
+                    'status': 'failed',
+                    'message': 'Task terminated by user'
+                })
+        else:
+            print(f"📝 Task {task_id} was not started yet, skipping execution history creation")
+        
+        # Delete the task from database
         db.session.delete(task)
         db.session.commit()
         
-        return jsonify({'message': 'Task deleted successfully'})
+        return jsonify({'message': 'Task terminated and deleted successfully'})
     except Exception as e:
-        print(f"Error deleting task: {str(e)}")
+        print(f"Error deleting/terminating task: {str(e)}")
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
@@ -1416,11 +1659,44 @@ def get_credential_password(credential_id):
 # History routes
 @app.route('/api/history', methods=['GET'])
 def get_history():
-    history = ExecutionHistory.query.order_by(ExecutionHistory.started_at.desc()).limit(100).all()
-    print(f"🔍 HISTORY API: Found {len(history)} records")
-    for i, h in enumerate(history[:5]):  # Show first 5 records
-        print(f"   {i+1}. ID: {h.id}, Host ID: {h.host_id}, Status: {h.status}, Playbook: {h.playbook.name if h.playbook else 'None'}")
-    return jsonify([h.to_dict() for h in history])
+    # Get pagination parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 25, type=int)
+    
+    # Limit per_page to prevent abuse
+    per_page = min(per_page, 100)
+    
+    # Use eager loading to prevent N+1 query problems
+    from sqlalchemy.orm import joinedload
+    
+    history_query = ExecutionHistory.query\
+        .options(
+            joinedload(ExecutionHistory.playbook),
+            joinedload(ExecutionHistory.host),
+            joinedload(ExecutionHistory.user)
+        )\
+        .order_by(ExecutionHistory.started_at.desc())
+    
+    # Get paginated results
+    paginated = history_query.paginate(
+        page=page, 
+        per_page=per_page, 
+        error_out=False
+    )
+    
+    print(f"🔍 HISTORY API: Page {page}, {len(paginated.items)}/{paginated.total} records (eager loaded)")
+    
+    return jsonify({
+        'data': [h.to_dict() for h in paginated.items],
+        'pagination': {
+            'page': page,
+            'per_page': per_page,
+            'total': paginated.total,
+            'pages': paginated.pages,
+            'has_next': paginated.has_next,
+            'has_prev': paginated.has_prev
+        }
+    })
 
 @app.route('/api/history/<history_id>', methods=['DELETE'])
 def delete_history(history_id):
@@ -2218,6 +2494,10 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
             env=env
         )
         
+        # Track the running process for termination support
+        running_processes[task_id] = process
+        print(f"🔍 Tracking webhook process {process.pid} for task {task_id}")
+        
         output_lines = []
         error_lines = []
         
@@ -2236,6 +2516,12 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
         
         try:
             process.wait(timeout=TASK_TIMEOUT)
+            
+            # Clean up process tracking on successful completion
+            if task_id in running_processes:
+                del running_processes[task_id]
+                print(f"🧹 Cleaned up completed webhook process tracking for task {task_id}")
+                
         except subprocess.TimeoutExpired:
             print(f"🚨 WEBHOOK TIMEOUT: Task exceeded {TASK_TIMEOUT} seconds (5 minutes), terminating...")
             
@@ -2267,6 +2553,11 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                     
             except Exception as e:
                 print(f"Error terminating webhook process: {e}")
+            
+            # Clean up process tracking on timeout
+            if task_id in running_processes:
+                del running_processes[task_id]
+                print(f"🧹 Cleaned up timed-out webhook process tracking for task {task_id}")
             
             # Mark webhook task as failed due to timeout
             with app.app_context():
@@ -2387,6 +2678,12 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
             
     except Exception as e:
         print(f"Webhook execution error: {str(e)}")
+        
+        # Clean up process tracking on exception
+        if task_id in running_processes:
+            del running_processes[task_id]
+            print(f"🧹 Cleaned up failed webhook process tracking for task {task_id}")
+        
         with app.app_context():
             task = Task.query.get(task_id)
             if task:
@@ -3739,6 +4036,10 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
             start_new_session=True  # Allow process group management for timeout handling
         )
         
+        # Track the running process for termination support
+        running_processes[task_id] = process
+        print(f"🔍 Tracking multi-host process {process.pid} for task {task_id}")
+        
         output_lines = []
         error_lines = []
         max_output_lines = 5000  # Limit memory usage for large outputs
@@ -3837,6 +4138,12 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
         
         try:
             process.wait(timeout=TASK_TIMEOUT)
+            
+            # Clean up process tracking on successful completion
+            if task_id in running_processes:
+                del running_processes[task_id]
+                print(f"🧹 Cleaned up completed multi-host process tracking for task {task_id}")
+                
         except subprocess.TimeoutExpired:
             print(f"🚨 TIMEOUT: Task exceeded {TASK_TIMEOUT} seconds (5 minutes), terminating...")
             
@@ -3872,6 +4179,11 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 pass  # Process already terminated
             except Exception as e:
                 print(f"Error terminating process: {e}")
+            
+            # Clean up process tracking on timeout
+            if task_id in running_processes:
+                del running_processes[task_id]
+                print(f"🧹 Cleaned up timed-out multi-host process tracking for task {task_id}")
             
             # Mark task as failed due to timeout
             with app.app_context():
@@ -4034,6 +4346,12 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
         
     except Exception as e:
         print(f"Error in multi-host playbook execution: {str(e)}")
+        
+        # Clean up process tracking on exception
+        if task_id in running_processes:
+            del running_processes[task_id]
+            print(f"🧹 Cleaned up failed multi-host process tracking for task {task_id}")
+        
         overall_status = 'failed'
         full_output = f"Error in multi-host playbook execution: {str(e)}"
         status_details = f"\n{'='*50}\nEXECUTION FAILED\n{'='*50}\nError: {str(e)}\n{'='*50}\n"
@@ -4079,33 +4397,43 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
             # Get task info for history creation
             task = Task.query.get(task_id)
             if task:
-                print(f"Creating execution history for task {task_id}")
-                print(f"Playbook ID: {playbook.id}, Host IDs: {host_ids}")
-                print(f"Username: {username}, Status: {overall_status}")
+                # Check if history already exists (e.g., from task termination)
+                existing_history = ExecutionHistory.query.filter_by(
+                    playbook_id=task.playbook_id,
+                    started_at=task.started_at
+                ).first()
                 
-                history = ExecutionHistory(
-                    playbook_id=playbook.id,
-                    host_id=primary_host_id,  # Use primary host for record (can be None for dynamic executions)
-                    user_id=task.user_id,  # Store the actual user who initiated the task
-                    status=overall_status,
-                    started_at=task_started_at,
-                    finished_at=task_finished_at,
-                    output=full_output + status_details,
-                    error_output='\n'.join(error_lines) if error_lines else None,
-                    username=username,  # Keep SSH username for backward compatibility
-                    host_list=host_list_json,
-                    webhook_id=None
-                )
-                
-                print(f"📋 Creating ExecutionHistory record:")
-                print(f"   Playbook ID: {playbook.id}")
-                print(f"   Host ID: {primary_host_id} ({'UI Host' if primary_host_id else 'Dynamic IPs'})")
-                print(f"   Status: {overall_status}")
-                print(f"   Host List JSON: {host_list_json}")
-                
-                db.session.add(history)
-                db.session.commit()
-                print(f"✅ Successfully created execution history with ID: {history.id}")
+                if existing_history:
+                    print(f"⚠️ History already exists for task {task_id} (ID: {existing_history.id}), skipping creation")
+                    history = existing_history
+                else:
+                    print(f"Creating execution history for task {task_id}")
+                    print(f"Playbook ID: {playbook.id}, Host IDs: {host_ids}")
+                    print(f"Username: {username}, Status: {overall_status}")
+                    
+                    history = ExecutionHistory(
+                        playbook_id=playbook.id,
+                        host_id=primary_host_id,  # Use primary host for record (can be None for dynamic executions)
+                        user_id=task.user_id,  # Store the actual user who initiated the task
+                        status=overall_status,
+                        started_at=task_started_at,
+                        finished_at=task_finished_at,
+                        output=full_output + status_details,
+                        error_output='\n'.join(error_lines) if error_lines else None,
+                        username=username,  # Keep SSH username for backward compatibility
+                        host_list=host_list_json,
+                        webhook_id=None
+                    )
+                    
+                    print(f"📋 Creating ExecutionHistory record:")
+                    print(f"   Playbook ID: {playbook.id}")
+                    print(f"   Host ID: {primary_host_id} ({'UI Host' if primary_host_id else 'Dynamic IPs'})")
+                    print(f"   Status: {overall_status}")
+                    print(f"   Host List JSON: {host_list_json}")
+                    
+                    db.session.add(history)
+                    db.session.commit()
+                    print(f"✅ Successfully created execution history with ID: {history.id}")
                 
                 # Extract artifacts from the output
                 if full_output:
@@ -4333,6 +4661,10 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
             env=env
         )
         
+        # Track the running process for termination support
+        running_processes[task_id] = process
+        print(f"🔍 Tracking single-host process {process.pid} for task {task_id}")
+        
         output_lines = []
         error_lines = []
         
@@ -4349,6 +4681,11 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
         # Wait for process to complete
         process.wait()
         
+        # Clean up process tracking
+        if task_id in running_processes:
+            del running_processes[task_id]
+            print(f"🧹 Cleaned up completed process tracking for task {task_id}")
+        
         # Get any remaining stderr
         stderr_output = process.stderr.read()
         if stderr_output:
@@ -4363,27 +4700,36 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
                 task.status = 'completed' if process.returncode == 0 else 'failed'
                 task.finished_at = datetime.utcnow()
                 
-                # Create history record
-                import json
-                host_list_json = json.dumps([host.to_dict()])
+                # Create history record (check if one already exists first)
+                existing_history = ExecutionHistory.query.filter_by(
+                    playbook_id=task.playbook_id,
+                    started_at=task.started_at
+                ).first()
                 
-                history = ExecutionHistory(
-                    playbook_id=playbook.id,
-                    host_id=host.id,
-                    user_id=task.user_id,  # Store the actual user who initiated the task
-                    status=task.status,
-                    started_at=task.started_at,
-                    finished_at=task.finished_at,
-                    output=task.output,
-                    error_output=task.error_output,
-                    username=username,
-                    host_list=host_list_json,
-                    webhook_id=None
-                )
-                
-                db.session.add(history)
-                db.session.commit()
-                print(f"Task {task_id} completed with status: {task.status}")
+                if existing_history:
+                    print(f"⚠️ History already exists for single-host task {task_id} (ID: {existing_history.id}), skipping creation")
+                    history = existing_history
+                else:
+                    import json
+                    host_list_json = json.dumps([host.to_dict()])
+                    
+                    history = ExecutionHistory(
+                        playbook_id=playbook.id,
+                        host_id=host.id,
+                        user_id=task.user_id,  # Store the actual user who initiated the task
+                        status=task.status,
+                        started_at=task.started_at,
+                        finished_at=task.finished_at,
+                        output=task.output,
+                        error_output=task.error_output,
+                        username=username,
+                        host_list=host_list_json,
+                        webhook_id=None
+                    )
+                    
+                    db.session.add(history)
+                    db.session.commit()
+                    print(f"Task {task_id} completed with status: {task.status}")
         
         # Emit completion
         socketio.emit('task_update', {
@@ -4397,6 +4743,12 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
         
     except Exception as e:
         print(f"Error in playbook execution: {str(e)}")
+        
+        # Clean up process tracking on exception
+        if task_id in running_processes:
+            del running_processes[task_id]
+            print(f"🧹 Cleaned up failed single-host process tracking for task {task_id}")
+        
         with app.app_context():
             task = Task.query.get(task_id)
             if task:

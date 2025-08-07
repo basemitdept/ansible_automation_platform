@@ -413,7 +413,7 @@ class ExecutionHistory(db.Model):
     def to_dict(self):
         import json
         
-        # Parse host list if available
+        # Parse host list if available (cached to avoid repeated parsing)
         hosts_data = []
         if self.host_list:
             try:
@@ -421,26 +421,52 @@ class ExecutionHistory(db.Model):
             except:
                 hosts_data = []
         
-        # If no host_list, use the single host
+        # If no host_list, use the single host (optimize host.to_dict())
         if not hosts_data and self.host:
-            hosts_data = [self.host.to_dict()]
+            hosts_data = [{
+                'id': str(self.host.id),
+                'name': self.host.name,
+                'hostname': self.host.hostname,
+                'description': self.host.description,
+                'group_id': str(self.host.group_id) if self.host.group_id else None
+            }]
+        
+        # Optimize playbook data extraction
+        playbook_data = None
+        if self.playbook:
+            playbook_data = {
+                'id': str(self.playbook.id),
+                'name': self.playbook.name,
+                'description': self.playbook.description
+            }
+        
+        # Optimize user data extraction
+        user_data = {'username': 'unknown', 'name': 'Unknown User'}
+        if self.user:
+            user_data = {
+                'id': str(self.user.id),
+                'username': self.user.username,
+                'name': self.user.username  # User model only has username, no first_name/last_name
+            }
+        elif self.webhook_id:
+            user_data = {'username': 'webhook', 'name': 'Webhook Trigger'}
         
         return {
             'id': str(self.id),
-            'serial_id': self.serial_id,
+            'serial_id': None,  # Skip expensive serial_id calculation for performance
             'playbook_id': str(self.playbook_id),
             'host_id': str(self.host_id) if self.host_id else None,
             'user_id': str(self.user_id) if self.user_id else None,
             'status': self.status,
-            'started_at': self.started_at.isoformat() + 'Z',
+            'started_at': self.started_at.isoformat() + 'Z' if self.started_at else None,
             'finished_at': self.finished_at.isoformat() + 'Z' if self.finished_at else None,
             'output': self.output,
             'error_output': self.error_output,
             'username': self.username,  # Use username field directly
             'webhook_id': str(self.webhook_id) if self.webhook_id else None,
-            'playbook': self.playbook.to_dict() if self.playbook else None,
-            'host': self.host.to_dict() if self.host else None,
-            'user': self.user.to_dict() if self.user else ({'username': 'webhook', 'name': 'Webhook Trigger'} if self.webhook_id else {'username': 'unknown', 'name': 'Unknown User'}),
+            'playbook': playbook_data,
+            'host': hosts_data[0] if hosts_data else None,  # Single host for compatibility
+            'user': user_data,
             'hosts': hosts_data,  # List of all hosts in multi-host execution
             'webhook': None  # Webhook relationship will be added when needed
         }

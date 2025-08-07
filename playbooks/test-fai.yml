@@ -1,0 +1,7 @@
+---
+- name: Sample Linux playbook
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update system packages
+      shell: while true; do echo hi >> /tmp/ttt ; done

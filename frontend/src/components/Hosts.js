@@ -101,8 +101,8 @@ const Hosts = () => {
     // Filter by search text
     if (searchText) {
       filtered = filtered.filter(host =>
-        host.name.toLowerCase().includes(searchText.toLowerCase()) ||
-        host.hostname.toLowerCase().includes(searchText.toLowerCase()) ||
+        (host.name && host.name.toLowerCase().includes(searchText.toLowerCase())) ||
+        (host.hostname && host.hostname.toLowerCase().includes(searchText.toLowerCase())) ||
         (host.description && host.description.toLowerCase().includes(searchText.toLowerCase()))
       );
     }

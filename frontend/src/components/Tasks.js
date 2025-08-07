@@ -42,7 +42,7 @@ const Tasks = () => {
   const isPageVisible = useRef(true);
 
   useEffect(() => {
-    fetchTasks();
+    fetchTasks(true); // Initial load with loading spinner
     
     // Connect to WebSocket for real-time updates
     socketService.connect();
@@ -105,8 +105,8 @@ const Tasks = () => {
   const startAutoRefresh = () => {
     stopAutoRefresh(); // Clear any existing interval
     intervalRef.current = setInterval(() => {
-      if (isPageVisible.current && !loading) {
-        fetchTasks();
+      if (isPageVisible.current) {
+        fetchTasks(); // Background refresh without loading state
       }
     }, 5000); // Refresh every 5 seconds
   };
@@ -118,8 +118,10 @@ const Tasks = () => {
     }
   };
 
-  const fetchTasks = async () => {
-    setLoading(true);
+  const fetchTasks = async (isManualRefresh = false) => {
+    if (isManualRefresh) {
+      setLoading(true);
+    }
     try {
       const response = await tasksAPI.getAll();
       // Sort by newest first (started_at or created_at descending)
@@ -133,17 +135,28 @@ const Tasks = () => {
     } catch (error) {
       console.error('Failed to fetch tasks');
     } finally {
-      setLoading(false);
+      if (isManualRefresh) {
+        setLoading(false);
+      }
     }
   };
 
   const handleDelete = async (id) => {
     try {
+      const task = tasks.find(t => t.id === id);
+      const isRunning = task && task.status === 'running';
+      
       await tasksAPI.delete(id);
-      message.success('Task deleted successfully');
+      
+      if (isRunning) {
+        message.success('Task terminated successfully');
+      } else {
+        message.success('Task deleted successfully');
+      }
+      
       fetchTasks(); // Refresh the list
     } catch (error) {
-      message.error('Failed to delete task');
+      message.error('Failed to delete/terminate task');
       console.error('Delete error:', error);
     }
   };
@@ -324,10 +337,13 @@ const Tasks = () => {
             View
           </Button>
           <Popconfirm
-            title="Delete this task?"
-            description="This action cannot be undone."
+            title={record.status === 'running' ? "Terminate this running task?" : "Delete this task?"}
+            description={record.status === 'running' ? 
+              "This will immediately kill the running process and mark the task as failed." : 
+              "This action cannot be undone."
+            }
             onConfirm={() => handleDelete(record.id)}
-            okText="Yes"
+            okText={record.status === 'running' ? "Terminate" : "Yes"}
             cancelText="No"
             okType="danger"
           >
@@ -335,7 +351,7 @@ const Tasks = () => {
               type="text"
               icon={<DeleteOutlined />}
               danger
-              title="Delete"
+              title={record.status === 'running' ? "Terminate Running Task" : "Delete Task"}
             />
           </Popconfirm>
         </Space>
@@ -354,7 +370,7 @@ const Tasks = () => {
           </Space>
         }
         extra={
-          <Button onClick={fetchTasks} loading={loading} icon={<ReloadOutlined />}>
+          <Button onClick={() => fetchTasks(true)} loading={loading} icon={<ReloadOutlined />}>
             Refresh
           </Button>
         }

@@ -29,10 +29,12 @@ const { TextArea } = Input;
 
 const Credentials = () => {
   const [credentials, setCredentials] = useState([]);
+  const [filteredCredentials, setFilteredCredentials] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCredential, setEditingCredential] = useState(null);
   const [credentialType, setCredentialType] = useState('ssh');
+  const [searchText, setSearchText] = useState('');
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -48,11 +50,31 @@ const Credentials = () => {
         new Date(b.created_at) - new Date(a.created_at)
       );
       setCredentials(sortedCredentials);
+      setFilteredCredentials(sortedCredentials);
     } catch (error) {
       message.error('Failed to fetch credentials');
       console.error('Error fetching credentials:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSearch = (value) => {
+    setSearchText(value);
+    if (!value) {
+      setFilteredCredentials(credentials);
+    } else {
+      const filtered = credentials.filter(credential =>
+        (credential.name && credential.name.toLowerCase().includes(value.toLowerCase())) ||
+        (credential.description && credential.description.toLowerCase().includes(value.toLowerCase())) ||
+        (credential.username && credential.username.toLowerCase().includes(value.toLowerCase())) ||
+        (credential.credential_type && credential.credential_type.toLowerCase().includes(value.toLowerCase()))
+      );
+      // Keep sort order (newest first) after filtering
+      const sortedFiltered = filtered.sort((a, b) => 
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      setFilteredCredentials(sortedFiltered);
     }
   };
 
@@ -205,18 +227,27 @@ const Credentials = () => {
               Manage SSH credentials for Ansible automation
             </Text>
           </div>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={handleCreate}
-          >
-            Add Credential
-          </Button>
+          <Space>
+            <Input.Search
+              placeholder="Search credentials..."
+              value={searchText}
+              onChange={(e) => handleSearch(e.target.value)}
+              style={{ width: 300 }}
+              allowClear
+            />
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={handleCreate}
+            >
+              Add Credential
+            </Button>
+          </Space>
         </div>
 
         <Table
           columns={columns}
-          dataSource={credentials}
+          dataSource={filteredCredentials}
           rowKey="id"
           loading={loading}
           pagination={{
