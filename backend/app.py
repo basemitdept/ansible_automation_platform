@@ -1420,6 +1420,9 @@ def create_terminated_task_history(task):
         started_at = task.started_at or datetime.utcnow()
         finished_at = task.finished_at or datetime.utcnow()
         
+        # Get the task's original serial ID to preserve it
+        original_serial_id = task.get_global_serial_id()
+        
         # Create execution history record
         history = ExecutionHistory(
             playbook_id=playbook.id,
@@ -1432,7 +1435,8 @@ def create_terminated_task_history(task):
             error_output=combined_error,
             username=None,  # Will be set from user relationship
             host_list=host_list_json,
-            webhook_id=None  # Explicitly set to None since task.webhook_id is virtual
+            webhook_id=None,  # Explicitly set to None since task.webhook_id is virtual
+            original_task_serial_id=original_serial_id  # Preserve the task's original ID
         )
         
         print(f"📝 About to create execution history with status: {history.status}")
@@ -2609,6 +2613,10 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 final_status = 'completed' if process.returncode == 0 else 'failed'
                 task.status = final_status
                 
+                # Get the task's original serial ID to preserve it
+                original_serial_id = task.get_global_serial_id()
+                print(f"🔍 DEBUG: Webhook task {task_id} original_serial_id = {original_serial_id}")
+                
                 # Create execution history entry for webhook execution
                 history = ExecutionHistory(
                     playbook_id=playbook.id,
@@ -2621,7 +2629,8 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                     error_output=task.error_output,
                     username='webhook',  # Mark as webhook execution
                     host_list=task.host_list,
-                    webhook_id=webhook_id  # Now we have webhook_id from the parameter
+                    webhook_id=webhook_id,  # Now we have webhook_id from the parameter
+                    original_task_serial_id=original_serial_id  # Preserve the task's original ID
                 )
                 db.session.add(history)
                 db.session.flush()  # Get the history ID
@@ -3533,7 +3542,7 @@ def analyze_ansible_output(output, hosts, variables=None):
     # Initialize all GUI hosts as unknown
     for host in hosts:
         host_results[host.hostname] = 'unknown'
-        task_failures[host.hostname] = {'failed_tasks': 0, 'total_tasks': 0}
+        task_failures[host.hostname] = {'failed_tasks': 0, 'total_tasks': 0, 'successful_tasks': 0}
     
     # Also add dynamic IPs from variables if hosts is empty
     dynamic_hostnames = []
@@ -3545,7 +3554,7 @@ def analyze_ansible_output(output, hosts, variables=None):
                 if ip and ip not in ['all', 'targets']:
                     dynamic_hostnames.append(ip)
                     host_results[ip] = 'unknown'
-                    task_failures[ip] = {'failed_tasks': 0, 'total_tasks': 0}
+                    task_failures[ip] = {'failed_tasks': 0, 'total_tasks': 0, 'successful_tasks': 0}
         print(f"🔍 DEBUG: Added dynamic hostnames for analysis: {dynamic_hostnames}")
     
     # Combine all hostnames to check
@@ -3578,6 +3587,7 @@ def analyze_ansible_output(output, hosts, variables=None):
                 # Count successful tasks
                 if f"ok: [{hostname}]" in line or f"changed: [{hostname}]" in line:
                     task_failures[hostname]['total_tasks'] += 1
+                    task_failures[hostname]['successful_tasks'] += 1
                     task_processed_per_host[task_key] = True
                     print(f"Task success: {current_task} on {hostname}")
                     
@@ -3648,11 +3658,14 @@ def analyze_ansible_output(output, hosts, variables=None):
                     recap_host = line.split(':')[0].strip()
                     if recap_host and recap_host not in [h.hostname for h in hosts]:
                         # This is a dynamic host, add it to results
-                        if 'unreachable=' in line and 'failed=' in line:
+                        if 'unreachable=' in line and 'failed=' in line and 'ok=' in line:
                             failed_match = line.split('failed=')[1].split()[0]
                             unreachable_match = line.split('unreachable=')[1].split()[0]
+                            ok_match = line.split('ok=')[1].split()[0]
                             failed_count = int(failed_match)
                             unreachable_count = int(unreachable_match)
+                            successful_count = int(ok_match)
+                            total_count = failed_count + successful_count
                             
                             if unreachable_count > 0:
                                 host_results[recap_host] = 'failed'
@@ -3666,7 +3679,11 @@ def analyze_ansible_output(output, hosts, variables=None):
                             
                             # Initialize task_failures for dynamic host
                             if recap_host not in task_failures:
-                                task_failures[recap_host] = {'failed_tasks': failed_count, 'total_tasks': failed_count}
+                                task_failures[recap_host] = {
+                                    'failed_tasks': failed_count, 
+                                    'total_tasks': total_count, 
+                                    'successful_tasks': successful_count
+                                }
                 except (ValueError, IndexError) as e:
                     print(f"Failed to parse dynamic host recap line: {line}, error: {e}")
     
@@ -4411,6 +4428,10 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                     print(f"Playbook ID: {playbook.id}, Host IDs: {host_ids}")
                     print(f"Username: {username}, Status: {overall_status}")
                     
+                    # Get the task's original serial ID to preserve it
+                    original_serial_id = task.get_global_serial_id()
+                    print(f"🔍 DEBUG: Multi-host task {task_id} original_serial_id = {original_serial_id}")
+                    
                     history = ExecutionHistory(
                         playbook_id=playbook.id,
                         host_id=primary_host_id,  # Use primary host for record (can be None for dynamic executions)
@@ -4422,7 +4443,8 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                         error_output='\n'.join(error_lines) if error_lines else None,
                         username=username,  # Keep SSH username for backward compatibility
                         host_list=host_list_json,
-                        webhook_id=None
+                        webhook_id=None,
+                        original_task_serial_id=original_serial_id  # Preserve the task's original ID
                     )
                     
                     print(f"📋 Creating ExecutionHistory record:")
@@ -4713,6 +4735,10 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
                     import json
                     host_list_json = json.dumps([host.to_dict()])
                     
+                    # Get the task's original serial ID to preserve it
+                    original_serial_id = task.get_global_serial_id()
+                    print(f"🔍 DEBUG: Task {task_id} original_serial_id = {original_serial_id}")
+                    
                     history = ExecutionHistory(
                         playbook_id=playbook.id,
                         host_id=host.id,
@@ -4724,7 +4750,8 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
                         error_output=task.error_output,
                         username=username,
                         host_list=host_list_json,
-                        webhook_id=None
+                        webhook_id=None,
+                        original_task_serial_id=original_serial_id  # Preserve the task's original ID
                     )
                     
                     db.session.add(history)

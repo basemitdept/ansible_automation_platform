@@ -227,6 +227,28 @@ class Task(db.Model):
         """Virtual webhook_id property - will be replaced with real column when migrated"""
         return None  # Will be set when webhooks integration is completed
     
+    def get_global_serial_id(self):
+        """Get global sequential ID - simple incremental from history count"""
+        try:
+            from sqlalchemy import func
+            # Get the highest serial ID from history + 1
+            max_history_id = ExecutionHistory.query.with_entities(
+                func.max(ExecutionHistory.original_task_serial_id)
+            ).scalar() or 0
+            
+            # Get the count of all history records (in case original_task_serial_id is NULL)
+            history_count = ExecutionHistory.query.count()
+            
+            # Use whichever is higher + 1
+            next_id = max(max_history_id, history_count) + 1
+            
+            return next_id
+        except:
+            # Fallback: just count all records + 1
+            from sqlalchemy import func
+            total_count = Task.query.count() + ExecutionHistory.query.count()
+            return total_count + 1
+    
     def to_dict(self):
         import json
         
@@ -244,7 +266,7 @@ class Task(db.Model):
         
         return {
             'id': str(self.id),
-            'serial_id': self.serial_id,
+            'serial_id': self.get_global_serial_id(),
             'playbook_id': str(self.playbook_id),
             'host_id': str(self.host_id) if self.host_id else None,
             'user_id': str(self.user_id) if self.user_id else None,
@@ -392,6 +414,7 @@ class ExecutionHistory(db.Model):
     username = db.Column(db.String(255))  # Keep for backward compatibility (SSH username)
     host_list = db.Column(db.Text)  # JSON string of all hosts in multi-host execution
     webhook_id = db.Column(db.String(36))  # Track webhook-triggered executions (no FK until webhooks table ready)
+    original_task_serial_id = db.Column(db.Integer)  # Store the original task's sequential ID
     
     playbook = db.relationship('Playbook', backref='history')
     host = db.relationship('Host', backref='history')
@@ -409,6 +432,20 @@ class ExecutionHistory(db.Model):
             return None
     
     # user_id is now a real column, no virtual property needed
+    
+    def get_global_serial_id(self):
+        """Get global sequential ID - ALWAYS use stored original_task_serial_id if available"""
+        # FIRST: Check if we have the original task serial ID stored
+        if self.original_task_serial_id:
+            return self.original_task_serial_id
+        
+        # FALLBACK: Calculate based on position (for old records without original_task_serial_id)
+        try:
+            return ExecutionHistory.query.filter(
+                ExecutionHistory.id <= self.id
+            ).count()
+        except:
+            return 1
     
     def to_dict(self):
         import json
@@ -453,7 +490,7 @@ class ExecutionHistory(db.Model):
         
         return {
             'id': str(self.id),
-            'serial_id': None,  # Skip expensive serial_id calculation for performance
+            'serial_id': self.get_global_serial_id(),  # Use global sequential numbering
             'playbook_id': str(self.playbook_id),
             'host_id': str(self.host_id) if self.host_id else None,
             'user_id': str(self.user_id) if self.user_id else None,
