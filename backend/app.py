@@ -1375,6 +1375,29 @@ def task_history_exists(task_id):
 def create_terminated_task_history(task):
     """Create execution history record for a terminated task"""
     try:
+        # First, check if a history record already exists for this task
+        existing_history = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
+        if existing_history:
+            print(f"⚠️ Execution history for task {task.id} already exists with status '{existing_history.status}', updating to terminated.")
+            print(f"   Current status: {existing_history.status}")
+            print(f"   History ID: {existing_history.id}")
+            existing_history.status = 'terminated'
+            existing_history.finished_at = task.finished_at or datetime.utcnow()
+            existing_history.error_output = 'Task terminated by user'
+            # Update output to include termination message
+            termination_message = "\n=== TASK TERMINATED BY USER ===\n"
+            if existing_history.output:
+                existing_history.output = existing_history.output + termination_message
+            else:
+                existing_history.output = termination_message + "No output captured before termination."
+            db.session.commit()
+            print(f"✅ Updated existing execution history record {existing_history.id} to terminated status")
+            
+            # Double-check the update worked
+            updated_history = ExecutionHistory.query.get(existing_history.id)
+            print(f"   Verified status after update: {updated_history.status}")
+            return
+            
         import json
         print(f"🔍 Creating execution history for terminated task {task.id}")
         
@@ -1434,6 +1457,13 @@ def create_terminated_task_history(task):
         # Get the task's original serial ID to preserve it
         original_serial_id = task.get_global_serial_id()
         
+        # Determine username for history
+        username = "unknown"
+        if task.user:
+            username = task.user.username
+        elif task.webhook:
+            username = task.webhook.name
+
         # Create execution history record
         history = ExecutionHistory(
             playbook_id=playbook.id,
@@ -1444,9 +1474,10 @@ def create_terminated_task_history(task):
             finished_at=finished_at,
             output=combined_output,
             error_output=combined_error,
-            username=None,  # Will be set from user relationship
+            username=username,
             host_list=host_list_json,
-            webhook_id=None,  # Explicitly set to None since task.webhook_id is virtual
+            webhook_id=task.webhook_id,  # Carry over the webhook_id
+            original_task_id=task.id, # Link to the original task
             original_task_serial_id=original_serial_id  # Preserve the task's original ID
         )
         
@@ -1506,6 +1537,10 @@ def delete_task(task_id):
         task = Task.query.get(task_id)
         if not task:
             return jsonify({'error': 'Task not found'}), 404
+
+        if task.webhook_id:
+            terminate_webhook_task(task_id)
+            return jsonify({'message': 'Webhook task terminated and deleted successfully'})
         
         # Always create execution history for tasks that have started
         terminated_task = False
@@ -1523,15 +1558,15 @@ def delete_task(task_id):
         if task.status in ['running', 'pending'] or task.started_at:
             print(f"📝 Creating execution history for task {task_id} with status {task.status}")
             
-            # Update task status to failed due to termination
-            task.status = 'failed'
+            # Update task status to terminated due to user action
+            task.status = 'terminated'
             if not task.finished_at:
                 task.finished_at = datetime.utcnow()
             task.error_output = 'Task terminated by user'
             
             # Commit task updates first
             db.session.commit()
-            print(f"📝 Task {task_id} status updated to failed, creating execution history...")
+            print(f"📝 Task {task_id} status updated to terminated, creating execution history...")
             
             # Create execution history record for terminated task
             create_terminated_task_history(task)
@@ -1540,7 +1575,7 @@ def delete_task(task_id):
             if terminated_task:
                 socketio.emit('task_update', {
                     'task_id': str(task_id),
-                    'status': 'failed',
+                    'status': 'terminated',
                     'message': 'Task terminated by user'
                 })
         else:
@@ -1555,6 +1590,38 @@ def delete_task(task_id):
         print(f"Error deleting/terminating task: {str(e)}")
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+def terminate_webhook_task(task_id):
+    try:
+        task = Task.query.get(task_id)
+        if not task:
+            return
+
+        if task.status in ['running', 'pending']:
+            terminated = terminate_task_process(task_id)
+            if terminated:
+                print(f"✅ Terminated running process for webhook task {task_id}")
+            else:
+                print(f"⚠️ Could not terminate process for webhook task {task_id}")
+
+        if task.status in ['running', 'pending'] or task.started_at:
+            task.status = 'terminated'
+            if not task.finished_at:
+                task.finished_at = datetime.utcnow()
+            task.error_output = 'Task terminated by user'
+            db.session.commit()
+            create_terminated_task_history(task)
+            socketio.emit('task_update', {
+                'task_id': str(task_id),
+                'status': 'terminated',
+                'message': 'Task terminated by user'
+            })
+
+        db.session.delete(task)
+        db.session.commit()
+    except Exception as e:
+        print(f"Error terminating webhook task: {str(e)}")
+        db.session.rollback()
 
 # Artifacts routes
 @app.route('/api/artifacts/<execution_id>', methods=['GET'])
@@ -2300,6 +2367,11 @@ def run_webhook_playbook(task_id, playbook_data, host_objects, username, passwor
         with app.app_context():
             task = Task.query.get(task_id)
             if task:
+                # Check if history already created by termination process
+                if ExecutionHistory.query.filter_by(original_task_id=task.id).first():
+                    print(f"⚠️ History for task {task.id} already exists, skipping duplicate creation.")
+                    return
+
                 task.status = 'failed'
                 task.error_output = str(e)
                 task.finished_at = datetime.utcnow()
@@ -2315,7 +2387,9 @@ def run_webhook_playbook(task_id, playbook_data, host_objects, username, passwor
                     error_output=str(e),
                     username='webhook',
                     host_list=task.host_list,
-                    webhook_id=webhook_id
+                    webhook_id=webhook_id,
+                    original_task_id=task.id,
+                    original_task_serial_id=task.get_global_serial_id()
                 )
                 db.session.add(history)
                 db.session.commit()
@@ -2583,29 +2657,42 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 del running_processes[task_id]
                 print(f"🧹 Cleaned up timed-out webhook process tracking for task {task_id}")
             
-            # Mark webhook task as failed due to timeout
+            # Mark webhook task as failed due to timeout (using atomic update)
             with app.app_context():
-                task = Task.query.get(task_id)
-                if task:
-                    task.status = 'failed'
-                    task.finished_at = datetime.utcnow()
-                    task.error_output = f"Webhook timeout: Execution exceeded {TASK_TIMEOUT} seconds (5 minutes) and was terminated."
-                    db.session.commit()
+                # Only update the task if its status is currently 'running'
+                updated_rows = Task.query.filter_by(id=task_id, status='running').update({
+                    'status': 'failed',
+                    'finished_at': datetime.utcnow(),
+                    'error_output': f"Webhook timeout: Execution exceeded {TASK_TIMEOUT} seconds (5 minutes) and was terminated."
+                })
+                db.session.commit()
+                
+                # If the update was successful, create the history record
+                if updated_rows > 0:
+                    print(f"Webhook task {task_id} timed out. Creating execution history.")
+                    task = Task.query.get(task_id)
                     
-                    # Create execution history for webhook timeout
-                    history = ExecutionHistory(
-                        playbook_id=task.playbook_id,
-                        host_id=task.host_id,
-                        status='failed',
-                        started_at=task.started_at,
-                        finished_at=task.finished_at,
-                        output=task.output or '',
-                        error_output=task.error_output,
-                        host_list=task.host_list,
-                        webhook_id=webhook_id
-                    )
-                    db.session.add(history)
-                    db.session.commit()
+                    # Check if history already exists
+                    if not ExecutionHistory.query.filter_by(original_task_id=task.id).first():
+                        # Create execution history for webhook timeout
+                        history = ExecutionHistory(
+                            playbook_id=task.playbook_id,
+                            host_id=task.host_id,
+                            user_id=task.user_id,
+                            status='failed',
+                            started_at=task.started_at,
+                            finished_at=task.finished_at,
+                            output=task.output or '',
+                            error_output=task.error_output,
+                            host_list=task.host_list,
+                            webhook_id=webhook_id,
+                            original_task_id=task.id,
+                            original_task_serial_id=task.get_global_serial_id()
+                        )
+                        db.session.add(history)
+                        db.session.commit()
+                else:
+                    print(f"Webhook task {task_id} was not in 'running' state during timeout. Skipping.")
                     
                     # Emit timeout notification
                     socketio.emit('task_update', {
@@ -2621,83 +2708,103 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
         if stderr_output:
             error_lines.append(stderr_output)
         
-        # Update task status and create execution history
+        # Atomically update task status to prevent race conditions with termination
         with app.app_context():
-            task = Task.query.get(task_id)
-            if task:
-                task.output = '\n'.join(output_lines)
-                task.error_output = '\n'.join(error_lines)
-                task.finished_at = datetime.utcnow()
+            # Determine the final status
+            final_status = 'completed' if process.returncode == 0 else 'failed'
+            final_output = '\n'.join(output_lines)
+            final_error = '\n'.join(error_lines) if error_lines else None
+            
+            # Only update the task if its status is currently 'running'
+            updated_rows = Task.query.filter_by(id=task_id, status='running').update({
+                'status': final_status,
+                'finished_at': datetime.utcnow(),
+                'output': final_output,
+                'error_output': final_error
+            })
+            db.session.commit()
+
+            # If the update was successful, create the history record
+            if updated_rows > 0:
+                print(f"Webhook task {task_id} finished with status '{final_status}'. Creating execution history.")
+                task = Task.query.get(task_id) # Re-fetch task to get updated info
                 
-                # Determine final status
-                final_status = 'completed' if process.returncode == 0 else 'failed'
-                task.status = final_status
-                
-                # Get the task's original serial ID to preserve it
-                original_serial_id = task.get_global_serial_id()
-                print(f"🔍 DEBUG: Webhook task {task_id} original_serial_id = {original_serial_id}")
-                
-                # Create execution history entry for webhook execution
-                history = ExecutionHistory(
-                    playbook_id=playbook.id,
-                    host_id=task.host_id,
-                    user_id=task.user_id,  # Use the webhook creator's user ID
-                    status=final_status,
-                    started_at=task.started_at,
-                    finished_at=task.finished_at,
-                    output=task.output,
-                    error_output=task.error_output,
-                    username=username,  # Use the actual SSH username
-                    host_list=task.host_list,
-                    webhook_id=webhook_id,  # Now we have webhook_id from the parameter
-                    original_task_serial_id=original_serial_id  # Preserve the task's original ID
-                )
-                db.session.add(history)
-                db.session.flush()  # Get the history ID
-                
-                # Process artifacts from the output for webhook execution
-                if task.output:
-                    try:
-                        print(f"Extracting artifacts from webhook output for execution {history.id}")
-                        output_lines = task.output.split('\n')
-                        print(f"Total output lines: {len(output_lines)}")
-                        
-                        # Use the existing artifact extraction function
-                        output_artifacts_data = extract_register_from_output(output_lines, history.id, hosts, variables)
-                        
-                        # Create and save all artifacts
-                        artifacts_created = []
-                        for artifact_data in output_artifacts_data:
-                            artifact = Artifact(
-                                execution_id=artifact_data['execution_id'],
-                                task_name=artifact_data['task_name'],
-                                register_name=artifact_data['register_name'],
-                                register_data=artifact_data['register_data'],
-                                host_name=artifact_data['host_name'],
-                                task_status=artifact_data['task_status']
-                            )
-                            db.session.add(artifact)
-                            artifacts_created.append(artifact)
-                        
-                        print(f"Saved {len(artifacts_created)} artifacts for webhook execution {history.id}")
-                        
-                    except Exception as artifact_error:
-                        print(f"Error processing webhook artifacts: {artifact_error}")
-                
-                if process.returncode == 0:
+                # Check if history already exists (shouldn't happen with atomic update, but just in case)
+                existing = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
+                if not existing:
+                    # Get the task's original serial ID to preserve it
+                    original_serial_id = task.get_global_serial_id()
+                    print(f"🔍 DEBUG: Webhook task {task.id} original_serial_id = {original_serial_id}")
+                    
+                    # Create execution history entry for webhook execution
+                    history = ExecutionHistory(
+                        playbook_id=playbook.id,
+                        host_id=task.host_id,
+                        user_id=task.user_id,  # Use the webhook creator's user ID
+                        status=final_status,
+                        started_at=task.started_at,
+                        finished_at=task.finished_at,
+                        output=task.output,
+                        error_output=task.error_output,
+                        username=username,  # Use the actual SSH username
+                        host_list=task.host_list,
+                        webhook_id=webhook_id,  # Now we have webhook_id from the parameter
+                        original_task_id=task.id, # Link to the original task
+                        original_task_serial_id=original_serial_id  # Preserve the task's original ID
+                    )
+                    db.session.add(history)
+                    db.session.flush()  # Get the history ID
+                    
+                    # Process artifacts from the output for webhook execution
+                    if task.output:
+                        try:
+                            print(f"Extracting artifacts from webhook output for execution {history.id}")
+                            output_lines = task.output.split('\n')
+                            print(f"Total output lines: {len(output_lines)}")
+                            
+                            # Use the existing artifact extraction function
+                            output_artifacts_data = extract_register_from_output(output_lines, history.id, hosts, variables)
+                            
+                            # Create and save all artifacts
+                            artifacts_created = []
+                            for artifact_data in output_artifacts_data:
+                                artifact = Artifact(
+                                    execution_id=artifact_data['execution_id'],
+                                    task_name=artifact_data['task_name'],
+                                    register_name=artifact_data['register_name'],
+                                    register_data=artifact_data['register_data'],
+                                    host_name=artifact_data['host_name'],
+                                    task_status=artifact_data['task_status']
+                                )
+                                db.session.add(artifact)
+                                artifacts_created.append(artifact)
+                            
+                            print(f"Saved {len(artifacts_created)} artifacts for webhook execution {history.id}")
+                            
+                        except Exception as artifact_error:
+                            print(f"Error processing webhook artifacts: {artifact_error}")
+                    
+                    db.session.commit()
+                    
+                    # Emit final status update
                     socketio.emit('task_update', {
                         'task_id': str(task_id),
-                        'status': 'completed',
-                        'message': f'Webhook execution completed successfully'
+                        'status': final_status,
+                        'message': f'Webhook execution {final_status}'
                     })
                 else:
-                    socketio.emit('task_update', {
-                        'task_id': str(task_id),
-                        'status': 'failed',
-                        'message': f'Webhook execution failed with return code {process.returncode}'
-                    })
-                
-                db.session.commit()
+                    print(f"⚠️ History for task {task.id} already exists (status: {existing.status}), skipping duplicate creation.")
+            else:
+                # The task was likely terminated
+                print(f"Webhook task {task_id} was not in 'running' state. Final status update skipped.")
+                # Let's check what the current status is
+                task = Task.query.get(task_id)
+                if task:
+                    print(f"   Current task status: {task.status}")
+                    # Check if there's already a history record
+                    hist = ExecutionHistory.query.filter_by(original_task_id=task_id).first()
+                    if hist:
+                        print(f"   Found existing history with status: {hist.status}")
         
         # Clean up
         try:
@@ -2714,27 +2821,45 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
             print(f"🧹 Cleaned up failed webhook process tracking for task {task_id}")
         
         with app.app_context():
-            task = Task.query.get(task_id)
-            if task:
-                task.status = 'failed'
-                task.error_output = str(e)
-                task.finished_at = datetime.utcnow()
+            # Only update the task if its status is currently 'running'
+            updated_rows = Task.query.filter_by(id=task_id, status='running').update({
+                'status': 'failed',
+                'finished_at': datetime.utcnow(),
+                'error_output': str(e)
+            })
+            db.session.commit()
+            
+            # If the update was successful, create the history record
+            if updated_rows > 0:
+                print(f"Webhook task {task_id} failed with error. Creating execution history.")
+                task = Task.query.get(task_id) # Re-fetch task to get updated info
                 
-                # Create execution history entry for failed webhook execution
-                history = ExecutionHistory(
-                    playbook_id=playbook.id,
-                    host_id=task.host_id,
-                    status='failed',
-                    started_at=task.started_at,
-                    finished_at=task.finished_at,
-                    output=task.output or '',
-                    error_output=str(e),
-                    username='webhook',
-                    host_list=task.host_list,
-                    webhook_id=None
-                )
-                db.session.add(history)
-                db.session.commit()
+                # Check if history already exists
+                if not ExecutionHistory.query.filter_by(original_task_id=task.id).first():
+                    # Get the task's original serial ID to preserve it
+                    original_serial_id = task.get_global_serial_id()
+                    
+                    # Create execution history entry for failed webhook execution
+                    history = ExecutionHistory(
+                        playbook_id=playbook.id,
+                        host_id=task.host_id,
+                        user_id=task.user_id,
+                        status='failed',
+                        started_at=task.started_at,
+                        finished_at=task.finished_at,
+                        output=task.output or '',
+                        error_output=str(e),
+                        username=username,
+                        host_list=task.host_list,
+                        webhook_id=webhook_id,
+                        original_task_id=task.id,
+                        original_task_serial_id=original_serial_id
+                    )
+                    db.session.add(history)
+                    db.session.commit()
+            else:
+                # The task was likely terminated
+                print(f"Webhook task {task_id} was not in 'running' state. Error handler skipped.")
         
         socketio.emit('task_update', {
             'task_id': str(task_id),
@@ -4341,43 +4466,52 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
         
         status_details += f"{'='*50}\n"
         
-        # Update task status and capture timestamps
-        task_started_at = None
-        task_finished_at = None
+        # Atomically update task status to prevent race conditions with termination
         with app.app_context():
-            task = Task.query.get(task_id)
-            if task:
-                task.output = full_output + status_details
-                task.error_output = '\n'.join(error_lines) if error_lines else None
-                task.status = overall_status
-                task.finished_at = datetime.utcnow()
+            # Only update the task if its status is currently 'running'
+            updated_rows = Task.query.filter_by(id=task_id, status='running').update({
+                'status': overall_status,
+                'finished_at': datetime.utcnow(),
+                'output': full_output + status_details,
+                'error_output': '\n'.join(error_lines) if error_lines else None
+            })
+            db.session.commit()
+            
+            # If the update was successful, create the history record
+            if updated_rows > 0:
+                print(f"Task {task_id} finished with status '{overall_status}'. Creating execution history.")
+                task = Task.query.get(task_id) # Re-fetch task to get updated info
+
+                # Create history record
+                existing_history = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
+
+                if not existing_history:
+                    history = ExecutionHistory(
+                        playbook_id=playbook.id,
+                        host_id=task.host_id,
+                        user_id=task.user_id,
+                        status=task.status,
+                        started_at=task.started_at,
+                        finished_at=task.finished_at,
+                        output=task.output,
+                        error_output=task.error_output,
+                        username=username,
+                        host_list=task.host_list,
+                        original_task_serial_id=task.get_global_serial_id()
+                    )
+                    db.session.add(history)
+                    db.session.commit()
                 
-                # Capture timestamps for history creation
-                task_started_at = task.started_at
-                task_finished_at = task.finished_at
-                
-                # Emit final task status update
+                # Emit final status update
                 socketio.emit('task_update', {
                     'task_id': str(task_id),
-                    'status': overall_status
+                    'status': task.status,
+                    'message': f'Execution {task.status}'
                 })
-                
-                # Commit task updates first
-                db.session.commit()
-                print(f"Task {task_id} status updated and committed")
-        
-        print(f"Multi-host task {task_id} completed with status: {overall_status}")
-        
-        print(f"🔍 DEBUG: About to create ExecutionHistory - reached end of execution")
-        print(f"🔍 DEBUG: overall_status={overall_status}, hosts={len(hosts) if hosts else 'None'}")
-        
-        # Emit completion
-        socketio.emit('task_update', {
-            'task_id': str(task_id),
-            'status': overall_status,
-            'message': f'Execution completed with status: {overall_status}'
-        })
-        
+            else:
+                # The task was likely terminated
+                print(f"Task {task_id} was not in 'running' state. Final status update skipped.")
+
         # Clean up
         os.unlink(inventory_path)
         
@@ -4409,9 +4543,8 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
             'message': f'Execution error: {str(e)}'
         })
     
-    # ALWAYS create ExecutionHistory record regardless of success or failure
-    print(f"🔍 DEBUG: About to create ExecutionHistory for task {task_id}")
-    print(f"🔍 DEBUG: hosts parameter: {hosts} (length: {len(hosts) if hosts else 'None'})")
+    # REMOVED: Duplicate history creation - history is already created in the atomic update section above
+    return  # Exit here to prevent duplicate history creation
     
     with app.app_context():
         try:
@@ -4435,13 +4568,10 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
             task = Task.query.get(task_id)
             if task:
                 # Check if history already exists (e.g., from task termination)
-                existing_history = ExecutionHistory.query.filter_by(
-                    playbook_id=task.playbook_id,
-                    started_at=task.started_at
-                ).first()
+                existing_history = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
                 
                 if existing_history:
-                    print(f"⚠️ History already exists for task {task_id} (ID: {existing_history.id}), skipping creation")
+                    print(f"⚠️ History already exists for task {task_id} (ID: {existing_history.id}, status: {existing_history.status}), skipping creation")
                     history = existing_history
                 else:
                     print(f"Creating execution history for task {task_id}")
@@ -4733,57 +4863,54 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
         if stderr_output:
             error_lines.append(stderr_output)
         
-        # Update task status
+        # Atomically update task status to prevent race conditions with termination
         with app.app_context():
-            task = Task.query.get(task_id)
-            if task:
-                task.output = '\n'.join(output_lines)
-                task.error_output = '\n'.join(error_lines) if error_lines else None
-                task.status = 'completed' if process.returncode == 0 else 'failed'
-                task.finished_at = datetime.utcnow()
+            # Determine the final status
+            final_status = 'completed' if process.returncode == 0 else 'failed'
+            
+            # Only update the task if its status is currently 'running'
+            updated_rows = Task.query.filter_by(id=task_id, status='running').update({
+                'status': final_status,
+                'finished_at': datetime.utcnow(),
+                'output': '\n'.join(output_lines),
+                'error_output': '\n'.join(error_lines) if error_lines else None
+            })
+            db.session.commit()
+
+            # If the update was successful, create the history record
+            if updated_rows > 0:
+                print(f"Task {task_id} finished with status '{final_status}'. Creating execution history.")
+                task = Task.query.get(task_id) # Re-fetch task to get updated info
                 
-                # Create history record (check if one already exists first)
-                existing_history = ExecutionHistory.query.filter_by(
-                    playbook_id=task.playbook_id,
-                    started_at=task.started_at
-                ).first()
+                # Create history record
+                existing_history = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
                 
-                if existing_history:
-                    print(f"⚠️ History already exists for single-host task {task_id} (ID: {existing_history.id}), skipping creation")
-                    history = existing_history
-                else:
-                    import json
-                    host_list_json = json.dumps([host.to_dict()])
-                    
-                    # Get the task's original serial ID to preserve it
-                    original_serial_id = task.get_global_serial_id()
-                    print(f"🔍 DEBUG: Task {task_id} original_serial_id = {original_serial_id}")
-                    
+                if not existing_history:
                     history = ExecutionHistory(
                         playbook_id=playbook.id,
                         host_id=host.id,
-                        user_id=task.user_id,  # Store the actual user who initiated the task
+                        user_id=task.user_id,
                         status=task.status,
                         started_at=task.started_at,
                         finished_at=task.finished_at,
                         output=task.output,
                         error_output=task.error_output,
                         username=username,
-                        host_list=host_list_json,
-                        webhook_id=None,
-                        original_task_serial_id=original_serial_id  # Preserve the task's original ID
+                        host_list=json.dumps([host.to_dict()]),
+                        original_task_serial_id=task.get_global_serial_id()
                     )
-                    
                     db.session.add(history)
                     db.session.commit()
-                    print(f"Task {task_id} completed with status: {task.status}")
-        
-        # Emit completion
-        socketio.emit('task_update', {
-            'task_id': str(task_id),
-            'status': task.status,
-            'message': f'Execution {"completed" if task.status == "completed" else "failed"}'
-        })
+
+                # Emit final status update
+                socketio.emit('task_update', {
+                    'task_id': str(task_id),
+                    'status': task.status,
+                    'message': f'Execution {task.status}'
+                })
+            else:
+                # The task was likely terminated
+                print(f"Task {task_id} was not in 'running' state. Final status update skipped.")
         
         # Clean up
         os.unlink(inventory_path)

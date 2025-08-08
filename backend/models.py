@@ -431,6 +431,7 @@ class ExecutionHistory(db.Model):
     username = db.Column(db.String(255))  # Keep for backward compatibility (SSH username)
     host_list = db.Column(db.Text)  # JSON string of all hosts in multi-host execution
     webhook_id = db.Column(db.String(36))  # Track webhook-triggered executions (no FK until webhooks table ready)
+    original_task_id = db.Column(db.String(36), unique=True, nullable=True) # The original task's UUID
     original_task_serial_id = db.Column(db.Integer)  # Store the original task's sequential ID
     
     playbook = db.relationship('Playbook', backref='history')
@@ -539,7 +540,8 @@ class ExecutionHistory(db.Model):
             'user': user_data,
             'hosts': hosts_data,  # List of all hosts in multi-host execution
             'webhook': None,  # Webhook relationship will be added when needed
-            'executed_by_type': executed_by_type
+            'executed_by_type': executed_by_type,
+            'original_task_id': self.original_task_id
         }
 
 class ApiToken(db.Model):
