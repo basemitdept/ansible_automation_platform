@@ -34,6 +34,84 @@ import { authAPI } from './services/api';
 
 const { Header, Sider, Content } = Layout;
 
+// Custom Cyber Blue dark theme
+const cyberBlueTheme = {
+  algorithm: theme.darkAlgorithm,
+  token: {
+    // Primary & Info Colors
+    colorPrimary: '#00b0ff', // A vibrant, clear blue
+    colorInfo: '#00b0ff',
+
+    // Background Colors
+    colorBgBase: '#1d1d1d', // Very dark base for high contrast
+    colorBgLayout: '#1d1d1d', // Main layout background
+    colorBgContainer: '#262626', // Cards, modals, etc.
+    colorBgElevated: '#333333', // Pop-ups, dropdowns
+
+    // Border Colors
+    colorBorder: '#434343', // Borders for containers
+    colorBorderSecondary: '#303030', // Borders for table headers, etc.
+    
+    // Text Colors
+    colorText: 'rgba(255, 255, 255, 0.85)', // Primary text
+    colorTextSecondary: 'rgba(255, 255, 255, 0.65)', // Secondary text
+    colorTextTertiary: 'rgba(255, 255, 255, 0.45)', // Tertiary/placeholder text
+
+    // Component-specific customizations
+    colorFillAlter: '#2a2a2a', // Alternating row colors in tables
+    colorFillContent: '#333333', // Background for content areas
+    controlItemBgActive: 'rgba(0, 176, 255, 0.2)', // Active background for buttons/controls
+    controlItemBgHover: 'rgba(255, 255, 255, 0.08)', // Hover background
+  },
+  components: {
+    Layout: {
+      headerBg: '#1d1d1d', // Keep header consistent with layout
+      siderBg: '#262626', // Sider slightly lighter
+    },
+    Menu: {
+      itemBg: 'transparent',
+      itemSelectedBg: 'rgba(0, 176, 255, 0.2)',
+      itemSelectedColor: '#00b0ff',
+      itemHoverBg: 'rgba(255, 255, 255, 0.08)',
+      itemActiveBg: 'rgba(0, 176, 255, 0.15)',
+    },
+    Card: {
+      colorBgContainer: '#262626',
+      headerBg: 'transparent', // Cleaner look for card headers
+      colorBorderSecondary: '#3a3a3a',
+    },
+    Table: {
+      headerBg: '#333333', // Darker header for tables
+      rowHoverBg: '#3a3a3a',
+      borderColor: '#434343',
+    },
+    Modal: {
+      headerBg: '#262626',
+      contentBg: '#262626',
+      footerBg: 'transparent',
+    },
+    Input: {
+      colorBgContainer: '#333333',
+      activeBorderColor: '#00b0ff',
+      hoverBorderColor: '#40c4ff',
+    },
+    Select: {
+      colorBgContainer: '#333333',
+      optionSelectedBg: 'rgba(0, 176, 255, 0.2)',
+    },
+    Button: {
+      defaultBg: '#333333',
+      defaultBorderColor: '#434343',
+      defaultHoverBg: '#3a3a3a',
+      defaultHoverBorderColor: '#00b0ff',
+      primaryShadow: '0 2px 0 rgba(0, 176, 255, 0.1)',
+    },
+    Switch: {
+      trackMinWidth: 44,
+    }
+  },
+};
+
 function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -215,7 +293,7 @@ function App() {
         justifyContent: 'center', 
         alignItems: 'center', 
         height: '100vh',
-        background: isDarkMode ? '#141414' : '#f0f2f5'
+        background: isDarkMode ? cyberBlueTheme.token.colorBgLayout : '#f0f2f5'
       }}>
         <Space direction="vertical" align="center">
           <RocketOutlined style={{ fontSize: '48px', color: '#1890ff' }} />
@@ -314,7 +392,7 @@ function App() {
             style={{
               margin: 0,
               padding: 24,
-              background: isDarkMode ? '#141414' : '#f0f2f5',
+              background: isDarkMode ? cyberBlueTheme.token.colorBgLayout : '#f0f2f5',
               overflow: 'auto'
             }}
           >
@@ -337,93 +415,9 @@ function App() {
     );
   };
 
-  // Custom gray theme configuration
-  const grayTheme = {
-    algorithm: theme.darkAlgorithm,
-    token: {
-      // Primary colors
-      colorPrimary: '#1890ff',
-      colorInfo: '#1890ff',
-      
-      // Background colors - various shades of gray
-      colorBgContainer: '#2f2f2f',
-      colorBgElevated: '#3a3a3a',
-      colorBgLayout: '#1f1f1f',
-      colorBgSpotlight: '#404040',
-      colorBgMask: 'rgba(0, 0, 0, 0.45)',
-      
-      // Border colors
-      colorBorder: '#404040',
-      colorBorderSecondary: '#303030',
-      
-      // Text colors
-      colorText: '#e8e8e8',
-      colorTextSecondary: '#b8b8b8',
-      colorTextTertiary: '#888888',
-      colorTextQuaternary: '#666666',
-      
-      // Component specific colors
-      colorFillAlter: '#2a2a2a',
-      colorFillContent: '#363636',
-      colorFillContentHover: '#404040',
-      colorFillSecondary: '#303030',
-      
-      // Control colors
-      controlItemBgHover: '#404040',
-      controlItemBgActive: '#1890ff',
-      controlItemBgActiveHover: '#40a9ff',
-      
-      // Menu colors
-      colorBgMenuItemSelected: '#1890ff',
-      colorBgMenuItemHover: '#404040',
-      colorBgMenuItemActive: '#1890ff',
-    },
-    components: {
-      Menu: {
-        itemBg: 'transparent',
-        subMenuItemBg: 'transparent',
-        itemSelectedBg: '#1890ff',
-        itemHoverBg: '#404040',
-        itemActiveBg: '#1890ff',
-        itemSelectedColor: '#ffffff',
-        itemColor: '#e8e8e8',
-        iconSize: 16,
-      },
-      Card: {
-        colorBgContainer: '#2f2f2f',
-        colorBorderSecondary: '#404040',
-      },
-      Table: {
-        colorBgContainer: '#2f2f2f',
-        headerBg: '#3a3a3a',
-        rowHoverBg: '#404040',
-      },
-      Modal: {
-        colorBgElevated: '#2f2f2f',
-        headerBg: '#3a3a3a',
-      },
-      Input: {
-        colorBgContainer: '#3a3a3a',
-        activeBorderColor: '#1890ff',
-        hoverBorderColor: '#40a9ff',
-      },
-      Select: {
-        colorBgContainer: '#3a3a3a',
-        optionSelectedBg: '#1890ff',
-        optionActiveBg: '#404040',
-      },
-      Button: {
-        defaultBg: '#3a3a3a',
-        defaultBorderColor: '#404040',
-        defaultHoverBg: '#404040',
-        defaultHoverBorderColor: '#40a9ff',
-      }
-    }
-  };
-
   return (
     <ConfigProvider
-      theme={isDarkMode ? grayTheme : { algorithm: theme.defaultAlgorithm }}
+      theme={isDarkMode ? cyberBlueTheme : { algorithm: theme.defaultAlgorithm }}
     >
       <AppContent />
     </ConfigProvider>

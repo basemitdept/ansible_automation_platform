@@ -173,17 +173,28 @@ init_database()
 def get_next_serial_id():
     """Get the next sequential ID for tasks"""
     try:
-        # Try to get the maximum existing serial_id
-        max_serial = db.session.query(db.func.max(Task.serial_id)).scalar()
-        return (max_serial or 0) + 1
+        from sqlalchemy import func
+        
+        # Get the highest serial ID from existing tasks
+        max_task_id = db.session.query(func.max(Task.serial_id)).scalar() or 0
+        
+        # Get the highest serial ID from history 
+        max_history_id = db.session.query(func.max(ExecutionHistory.original_task_serial_id)).scalar() or 0
+        
+        # Use whichever is higher + 1
+        next_id = max(max_task_id, max_history_id) + 1
+        
+        print(f"🔢 Assigning sequential ID: {next_id} (max_task: {max_task_id}, max_history: {max_history_id})")
+        return next_id
+        
     except Exception as e:
         print(f"Error getting next serial ID: {e}")
-        # Fallback: count existing tasks + 1
+        # Fallback: count existing records + 1
         try:
-            task_count = Task.query.count()
-            return task_count + 1
+            total_count = Task.query.count() + ExecutionHistory.query.count()
+            return total_count + 1
         except Exception as e2:
-            print(f"Error getting task count: {e2}")
+            print(f"Error getting fallback count: {e2}")
             return 1
 
 # Authentication middleware
@@ -1809,7 +1820,8 @@ def execute_playbook():
             host_id=primary_host.id,
             user_id=current_user_id,  # Store the user who created the task
             status='pending',
-            host_list=host_list_json
+            host_list=host_list_json,
+            serial_id=get_next_serial_id()  # Assign sequential ID
         )
     else:
         # Dynamic targets from variables or playbook-defined targets
@@ -1825,7 +1837,8 @@ def execute_playbook():
             host_id=None,  # No specific host for dynamic execution
             user_id=current_user_id,  # Store the user who created the task
             status='pending',
-            host_list=host_list_json
+            host_list=host_list_json,
+            serial_id=get_next_serial_id()  # Assign sequential ID
         )
     
     try:
@@ -1990,8 +2003,12 @@ def get_webhooks():
     return jsonify([webhook.to_dict() for webhook in webhooks])
 
 @app.route('/api/webhooks', methods=['POST'])
+@jwt_required()
 def create_webhook():
     data = request.json
+    
+    # Get current user
+    current_user_id = get_jwt_identity()
     
     # Generate a secure token
     token = secrets.token_urlsafe(32)
@@ -2014,6 +2031,7 @@ def create_webhook():
         enabled=data.get('enabled', True),
         default_variables=variables_json,
         credential_id=data.get('credential_id'),
+        user_id=current_user_id,  # Track who created the webhook
         description=data.get('description', '')
     )
     
@@ -2180,9 +2198,11 @@ def trigger_webhook(webhook_token):
     task = Task(
         playbook_id=playbook.id,
         host_id=primary_host.id,
-        user_id=None,  # Webhook executions don't have a user
+        user_id=webhook.user_id,  # Use the webhook creator's user ID
+        webhook_id=webhook.id,  # Track which webhook triggered this task
         status='pending',
-        host_list=host_list_json
+        host_list=host_list_json,
+        serial_id=get_next_serial_id()  # Assign sequential ID
     )
     db.session.add(task)
     db.session.commit()
@@ -2621,13 +2641,13 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                 history = ExecutionHistory(
                     playbook_id=playbook.id,
                     host_id=task.host_id,
-                    user_id=None,  # Webhook executions don't have a user
+                    user_id=task.user_id,  # Use the webhook creator's user ID
                     status=final_status,
                     started_at=task.started_at,
                     finished_at=task.finished_at,
                     output=task.output,
                     error_output=task.error_output,
-                    username='webhook',  # Mark as webhook execution
+                    username=username,  # Use the actual SSH username
                     host_list=task.host_list,
                     webhook_id=webhook_id,  # Now we have webhook_id from the parameter
                     original_task_serial_id=original_serial_id  # Preserve the task's original ID
