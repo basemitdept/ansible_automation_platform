@@ -59,16 +59,35 @@ const Dashboard = () => {
     }
     try {
       const [tasksRes, historyRes, hostsRes, groupsRes, playbooksRes, usersRes] = await Promise.all([
-        tasksAPI.getAll().catch(() => ({ data: [] })),
-        historyAPI.getAll().catch(() => ({ data: [] })),
-        hostsAPI.getAll().catch(() => ({ data: [] })),
-        hostGroupsAPI.getAll().catch(() => ({ data: [] })),
-        playbooksAPI.getAll().catch(() => ({ data: [] })),
-        usersAPI.getAll().catch(() => ({ data: [] }))
+        tasksAPI.getAll().catch((err) => {
+          console.error('Failed to fetch tasks:', err);
+          return { data: [] };
+        }),
+        historyAPI.getAll().catch((err) => {
+          console.error('Failed to fetch history:', err);
+          return { data: [] };
+        }),
+        hostsAPI.getAll().catch((err) => {
+          console.error('Failed to fetch hosts:', err);
+          return { data: [] };
+        }),
+        hostGroupsAPI.getAll().catch((err) => {
+          console.error('Failed to fetch host groups:', err);
+          return { data: [] };
+        }),
+        playbooksAPI.getAll().catch((err) => {
+          console.error('Failed to fetch playbooks:', err);
+          return { data: [] };
+        }),
+        usersAPI.getAll().catch((err) => {
+          console.error('Failed to fetch users:', err);
+          return { data: [] };
+        })
       ]);
 
       const tasks = tasksRes.data || [];
-      const history = historyRes.data || [];
+      // Handle new paginated API response format for history
+      const history = historyRes.data.data || historyRes.data || [];
       const hosts = hostsRes.data || [];
       const hostGroups = groupsRes.data || [];
       const playbooks = playbooksRes.data || [];
@@ -122,6 +141,15 @@ const Dashboard = () => {
         .sort((a, b) => new Date(b.started_at) - new Date(a.started_at))
         .slice(0, 10);
 
+      console.log('📊 Dashboard data fetched:', {
+        tasks: tasks.length,
+        history: history.length,
+        hosts: hosts.length,
+        hostGroups: hostGroups.length,
+        playbooks: playbooks.length,
+        users: users.length
+      });
+
       setStats({
         tasks: taskStats,
         hosts: hostStats,
@@ -132,7 +160,7 @@ const Dashboard = () => {
         recentHistory
       });
       setLastRefresh(new Date());
-      // Dashboard data updated successfully
+      console.log('✅ Dashboard data updated successfully');
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {

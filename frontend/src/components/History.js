@@ -503,22 +503,15 @@ const History = () => {
       title: 'User',
       key: 'user',
       render: (_, record) => {
-        // Show webhook name if task was triggered by webhook
-        if (record.webhook) {
-          return (
-            <Space>
-              <ApiOutlined />
-              <span style={{ color: '#1890ff' }}>
-                {record.webhook.name}
-              </span>
-            </Space>
-          );
-        }
-        // Show user if task was triggered by user
+        const icon = record.executed_by_type === 'webhook' ? <ApiOutlined /> : <UserOutlined />;
+        const name = record.user?.username || 'Unknown';
+        
         return (
           <Space>
-            <UserOutlined />
-            {record.user?.username || 'Unknown'}
+            {icon}
+            <span style={{ color: record.executed_by_type === 'webhook' ? '#1890ff' : 'inherit' }}>
+              {name}
+            </span>
           </Space>
         );
       },
@@ -666,17 +659,15 @@ const History = () => {
                 </div>
                 <div>
                   <Text strong>User:</Text> {
-                    selectedExecution.webhook ? (
-                      <span style={{ color: '#1890ff' }}>
-                        <ApiOutlined style={{ marginRight: 4 }} />
-                        {selectedExecution.webhook.name}
-                      </span>
-                    ) : (
-                      <span>
-                        <UserOutlined style={{ marginRight: 4 }} />
-                        {selectedExecution.user?.username || 'Unknown'}
-                      </span>
-                    )
+                    (() => {
+                      const icon = selectedExecution.executed_by_type === 'webhook' ? <ApiOutlined /> : <UserOutlined />;
+                      const name = selectedExecution.user?.username || 'Unknown';
+                      return (
+                        <span style={{ color: selectedExecution.executed_by_type === 'webhook' ? '#1890ff' : 'inherit' }}>
+                          {icon} {name}
+                        </span>
+                      );
+                    })()
                   }
                 </div>
                 <div>

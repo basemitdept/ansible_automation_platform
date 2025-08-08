@@ -199,55 +199,45 @@ class Task(db.Model):
     output = db.Column(db.Text)
     error_output = db.Column(db.Text)
     host_list = db.Column(db.Text)  # JSON string of all hosts in multi-host execution
+    webhook_id = db.Column(db.String(36), db.ForeignKey('webhooks.id'), nullable=True)  # Track webhook-triggered tasks
+    serial_id = db.Column(db.Integer, nullable=True)  # Sequential ID for display
     
     playbook = db.relationship('Playbook', backref='tasks')
     host = db.relationship('Host', backref='tasks')
     user = db.relationship('User', backref='tasks')  # User who created the task
-    # Note: Webhook relationships will be added when those tables exist
+    webhook = db.relationship('Webhook', backref='tasks')  # Webhook that triggered the task
     
-    # Virtual properties for fields that don't exist in database yet
-    @property
-    def serial_id(self):
-        """Virtual serial_id property - will be replaced with real column when migrated"""
-        try:
-            # Use execution history count to match history serial_id
-            # Count all executions that started at or before this task's start time
-            if self.started_at:
-                return ExecutionHistory.query.filter(ExecutionHistory.started_at <= self.started_at).count() + 1
-            else:
-                # For pending tasks, estimate based on current execution count + 1
-                return ExecutionHistory.query.count() + 1
-        except:
-            return None
-    
-    # user_id is now a real column, no virtual property needed
-    
-    @property
-    def webhook_id(self):
-        """Virtual webhook_id property - will be replaced with real column when migrated"""
-        return None  # Will be set when webhooks integration is completed
+    # Note: serial_id is now a real database column, no virtual property needed
     
     def get_global_serial_id(self):
-        """Get global sequential ID - simple incremental from history count"""
+        """Get global sequential ID - use stored serial_id if available, otherwise calculate"""
+        # FIRST: Check if we have a stored serial_id
+        if self.serial_id is not None:
+            return self.serial_id
+            
+        # FALLBACK: Calculate next available ID for new tasks
         try:
             from sqlalchemy import func
-            # Get the highest serial ID from history + 1
+            
+            # Get the highest serial ID from existing tasks
+            max_task_id = Task.query.with_entities(
+                func.max(Task.serial_id)
+            ).scalar() or 0
+            
+            # Get the highest serial ID from history
             max_history_id = ExecutionHistory.query.with_entities(
                 func.max(ExecutionHistory.original_task_serial_id)
             ).scalar() or 0
             
-            # Get the count of all history records (in case original_task_serial_id is NULL)
-            history_count = ExecutionHistory.query.count()
-            
             # Use whichever is higher + 1
-            next_id = max(max_history_id, history_count) + 1
+            next_id = max(max_task_id, max_history_id) + 1
             
             return next_id
-        except:
-            # Fallback: just count all records + 1
-            from sqlalchemy import func
-            total_count = Task.query.count() + ExecutionHistory.query.count()
-            return total_count + 1
+            
+        except Exception as e:
+            print(f"Error calculating task serial ID: {e}")
+            # Final fallback
+            return 1
     
     def to_dict(self):
         import json
@@ -264,6 +254,28 @@ class Task(db.Model):
         if not hosts_data and self.host:
             hosts_data = [self.host.to_dict()]
         
+        # Determine user data for display - show webhook name for webhook tasks, username for user tasks
+        user_data = {'username': 'unknown', 'name': 'Unknown User'}
+        if self.webhook_id and self.webhook:
+            # For webhook executions, show the webhook name
+            user_data = {
+                'id': str(self.webhook_id),
+                'username': self.webhook.name,
+                'name': f'Webhook: {self.webhook.name}'
+            }
+        elif self.user:
+            # For user executions, show the username
+            user_data = {
+                'id': str(self.user.id),
+                'username': self.user.username,
+                'name': self.user.username
+            }
+
+        # Determine executed_by_type for icon display
+        executed_by_type = 'user'
+        if self.webhook_id and self.webhook:
+            executed_by_type = 'webhook'
+
         return {
             'id': str(self.id),
             'serial_id': self.get_global_serial_id(),
@@ -277,10 +289,11 @@ class Task(db.Model):
             'error_output': self.error_output,
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'host': self.host.to_dict() if self.host else None,
-            'user': self.user.to_dict() if self.user else {'username': 'unknown', 'name': 'Unknown User'},
+            'user': user_data,
             'webhook_id': str(self.webhook_id) if self.webhook_id else None,
             'webhook': None,  # Webhook relationship will be added when needed
-            'hosts': hosts_data  # List of all hosts in multi-host execution
+            'hosts': hosts_data,  # List of all hosts in multi-host execution
+            'executed_by_type': executed_by_type
         }
 
 class Credential(db.Model):
@@ -352,6 +365,7 @@ class Webhook(db.Model):
     enabled = db.Column(db.Boolean, default=True)
     default_variables = db.Column(db.Text)  # JSON object of default variable values
     credential_id = db.Column(db.String(36), db.ForeignKey('credentials.id'))  # Optional default credential
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)  # Track who created the webhook
     description = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -360,6 +374,7 @@ class Webhook(db.Model):
     
     playbook = db.relationship('Playbook', backref='webhooks')
     credential = db.relationship('Credential', backref='webhooks')
+    user = db.relationship('User', backref='webhooks')  # User who created the webhook
     
     def to_dict(self):
         import json
@@ -389,6 +404,7 @@ class Webhook(db.Model):
             'enabled': self.enabled,
             'default_variables': default_vars,
             'credential_id': str(self.credential_id) if self.credential_id else None,
+            'user_id': str(self.user_id) if self.user_id else None,
             'description': self.description,
             'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z',
@@ -396,6 +412,7 @@ class Webhook(db.Model):
             'trigger_count': self.trigger_count,
             'playbook': self.playbook.to_dict() if self.playbook else None,
             'credential': self.credential.to_dict() if self.credential else None,
+            'user': self.user.to_dict() if self.user else None,
             'webhook_url': f'/api/webhook/trigger/{self.token}'
         }
 
@@ -477,17 +494,33 @@ class ExecutionHistory(db.Model):
                 'description': self.playbook.description
             }
         
-        # Optimize user data extraction
+        # Optimize user data extraction - show webhook name for webhook executions, username for user executions
         user_data = {'username': 'unknown', 'name': 'Unknown User'}
-        if self.user:
+        if self.webhook_id:
+            # For webhook executions, show the webhook name
+            try:
+                webhook = Webhook.query.get(self.webhook_id)
+                if webhook:
+                    user_data = {
+                        'id': str(self.webhook_id),
+                        'username': webhook.name,
+                        'name': f'Webhook: {webhook.name}'
+                    }
+            except:
+                user_data = {'username': 'webhook', 'name': 'Webhook Trigger'}
+        elif self.user:
+            # For user executions, show the username
             user_data = {
                 'id': str(self.user.id),
                 'username': self.user.username,
                 'name': self.user.username  # User model only has username, no first_name/last_name
             }
-        elif self.webhook_id:
-            user_data = {'username': 'webhook', 'name': 'Webhook Trigger'}
         
+        # Determine executed_by_type for icon display
+        executed_by_type = 'user'
+        if self.webhook_id:
+            executed_by_type = 'webhook'
+
         return {
             'id': str(self.id),
             'serial_id': self.get_global_serial_id(),  # Use global sequential numbering
@@ -505,7 +538,8 @@ class ExecutionHistory(db.Model):
             'host': hosts_data[0] if hosts_data else None,  # Single host for compatibility
             'user': user_data,
             'hosts': hosts_data,  # List of all hosts in multi-host execution
-            'webhook': None  # Webhook relationship will be added when needed
+            'webhook': None,  # Webhook relationship will be added when needed
+            'executed_by_type': executed_by_type
         }
 
 class ApiToken(db.Model):

@@ -1,5 +1,7 @@
-- name: ggg
+---
+- name: Sample Linux playbook
   hosts: all
+  become: yes
   tasks:
-  - name: gggsdfvdfsvsfv
-    command: hostname
+    - name: Update system packages
+      command: hostname 
