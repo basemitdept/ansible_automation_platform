@@ -27,12 +27,13 @@ import {
   ApiOutlined
 } from '@ant-design/icons';
 import { tasksAPI } from '../services/api';
+import { hasPermission } from '../utils/permissions';
 import socketService from '../services/socket';
 import moment from 'moment';
 
 const { Title } = Typography;
 
-const Tasks = () => {
+const Tasks = ({ currentUser }) => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const autoRefresh = true; // Always auto refresh in background
@@ -329,24 +330,26 @@ const Tasks = () => {
           >
             View
           </Button>
-          <Popconfirm
-            title={record.status === 'running' ? "Terminate this running task?" : "Delete this task?"}
-            description={record.status === 'running' ? 
-              "This will immediately kill the running process and mark the task as failed." : 
-              "This action cannot be undone."
-            }
-            onConfirm={() => handleDelete(record.id)}
-            okText={record.status === 'running' ? "Terminate" : "Yes"}
-            cancelText="No"
-            okType="danger"
-          >
-            <Button
-              type="text"
-              icon={<DeleteOutlined />}
-              danger
-              title={record.status === 'running' ? "Terminate Running Task" : "Delete Task"}
-            />
-          </Popconfirm>
+          {hasPermission(currentUser, 'delete_task') && (
+            <Popconfirm
+              title={record.status === 'running' ? "Terminate this running task?" : "Delete this task?"}
+              description={record.status === 'running' ? 
+                "This will immediately kill the running process and mark the task as failed." : 
+                "This action cannot be undone."
+              }
+              onConfirm={() => handleDelete(record.id)}
+              okText={record.status === 'running' ? "Terminate" : "Yes"}
+              cancelText="No"
+              okType="danger"
+            >
+              <Button
+                type="text"
+                icon={<DeleteOutlined />}
+                danger
+                title={record.status === 'running' ? "Terminate Running Task" : "Delete Task"}
+              />
+            </Popconfirm>
+          )}
         </Space>
       ),
       width: 130,
