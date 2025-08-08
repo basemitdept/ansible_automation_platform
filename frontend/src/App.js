@@ -325,7 +325,7 @@ function App() {
           }}
         >
           <div style={{ 
-            height: 32, 
+            height: 64, 
             margin: 16, 
             background: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.2)',
             borderRadius: 6,
@@ -333,11 +333,8 @@ function App() {
             alignItems: 'center',
             justifyContent: 'center',
             color: '#1890ff',
-            fontWeight: 'bold',
-            fontSize: collapsed ? 16 : 14
           }}>
-            <RocketOutlined style={{ marginRight: collapsed ? 0 : 8 }} />
-            {!collapsed && 'Ansible Automation'}
+            <RocketOutlined style={{ fontSize: '32px' }} />
           </div>
           <Menu
             theme={isDarkMode ? "dark" : "light"}

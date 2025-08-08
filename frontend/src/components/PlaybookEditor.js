@@ -31,11 +31,12 @@ import {
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { playbooksAPI, hostsAPI, hostGroupsAPI, tasksAPI, credentialsAPI } from '../services/api';
+import { hasPermission } from '../utils/permissions';
 
 const { Title } = Typography;
 const { Option } = Select;
 
-const PlaybookEditor = () => {
+const PlaybookEditor = ({ currentUser }) => {
   const navigate = useNavigate();
   const [playbooks, setPlaybooks] = useState([]);
   const [hosts, setHosts] = useState([]);
@@ -630,16 +631,26 @@ const PlaybookEditor = () => {
             <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>
               Actions:
             </label>
-            <Button
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              onClick={handleExecute}
-              disabled={!selectedPlaybook || getTargetCount() === 0 || (!selectedCredential && !customAuth)}
-              loading={executing}
-              size="large"
-            >
-              Execute Playbook
-            </Button>
+            {hasPermission(currentUser, 'execute') ? (
+              <Button
+                type="primary"
+                icon={<PlayCircleOutlined />}
+                onClick={handleExecute}
+                disabled={!selectedPlaybook || getTargetCount() === 0 || (!selectedCredential && !customAuth)}
+                loading={executing}
+                size="large"
+              >
+                Execute Playbook
+              </Button>
+            ) : (
+              <Alert
+                message="Permission Required"
+                description="You need execution permissions to run playbooks."
+                type="warning"
+                showIcon
+                style={{ marginTop: 16 }}
+              />
+            )}
             
             {getTargetCount() === 0 && (
               <div style={{ marginTop: 8, fontSize: '12px', color: '#ff4d4f' }}>

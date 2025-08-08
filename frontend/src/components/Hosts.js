@@ -31,11 +31,12 @@ import {
   SettingOutlined
 } from '@ant-design/icons';
 import { hostsAPI, hostGroupsAPI } from '../services/api';
+import { hasPermission } from '../utils/permissions';
 import moment from 'moment';
 
 const { Title } = Typography;
 
-const Hosts = () => {
+const Hosts = ({ currentUser }) => {
   const [hosts, setHosts] = useState([]);
   const [hostGroups, setHostGroups] = useState([]);
   const [filteredHosts, setFilteredHosts] = useState([]);
@@ -339,25 +340,36 @@ const Hosts = () => {
       width: 120,
       render: (_, record) => (
         <Space>
-          <Button
-            type="text"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-            title="Edit"
-          />
-          <Popconfirm
-            title="Are you sure you want to delete this host?"
-            onConfirm={() => handleDelete(record.id)}
-            okText="Yes"
-            cancelText="No"
-          >
+          {hasPermission(currentUser, 'edit') ? (
             <Button
               type="text"
-              danger
-              icon={<DeleteOutlined />}
-              title="Delete"
+              icon={<EditOutlined />}
+              onClick={() => handleEdit(record)}
+              title="Edit"
             />
-          </Popconfirm>
+          ) : (
+            <Button
+              type="text"
+              icon={<DatabaseOutlined />}
+              onClick={() => handleEdit(record)}
+              title="View"
+            />
+          )}
+          {hasPermission(currentUser, 'delete_host') && (
+            <Popconfirm
+              title="Are you sure you want to delete this host?"
+              onConfirm={() => handleDelete(record.id)}
+              okText="Yes"
+              cancelText="No"
+            >
+              <Button
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                title="Delete"
+              />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -404,19 +416,23 @@ const Hosts = () => {
             </Col>
             <Col span={8}>
               <Space>
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  onClick={handleCreate}
-                >
-                  New Host
-                </Button>
-                <Button
-                  icon={<UnorderedListOutlined />}
-                  onClick={handleBulkCreate}
-                >
-                  Bulk Add
-                </Button>
+                {hasPermission(currentUser, 'create') && (
+                  <>
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={handleCreate}
+                    >
+                      New Host
+                    </Button>
+                    <Button
+                      icon={<UnorderedListOutlined />}
+                      onClick={handleBulkCreate}
+                    >
+                      Bulk Add
+                    </Button>
+                  </>
+                )}
               </Space>
             </Col>
           </Row>
@@ -448,13 +464,15 @@ const Hosts = () => {
         <div>
           <Row style={{ marginBottom: 16 }}>
             <Col span={24} style={{ textAlign: 'right' }}>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={handleGroupCreate}
-              >
-                New Group
-              </Button>
+              {hasPermission(currentUser, 'create') && (
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={handleGroupCreate}
+                >
+                  New Group
+                </Button>
+              )}
             </Col>
           </Row>
           <Row gutter={[16, 16]}>
@@ -470,31 +488,46 @@ const Hosts = () => {
                   }
                   extra={
                     <Space>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EditOutlined />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEditGroup(group);
-                        }}
-                      />
-                      <Popconfirm
-                        title="Delete this group?"
-                        description="Hosts in this group will be ungrouped."
-                        onConfirm={() => handleDeleteGroup(group.id)}
-                        okText="Yes"
-                        cancelText="No"
-                        onClick={(e) => e.stopPropagation()}
-                      >
+                      {hasPermission(currentUser, 'edit') ? (
                         <Button
                           type="text"
                           size="small"
-                          danger
-                          icon={<DeleteOutlined />}
-                          onClick={(e) => e.stopPropagation()}
+                          icon={<EditOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditGroup(group);
+                          }}
                         />
-                      </Popconfirm>
+                      ) : (
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<GroupOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditGroup(group);
+                          }}
+                          title="View"
+                        />
+                      )}
+                      {hasPermission(currentUser, 'delete_host') && (
+                        <Popconfirm
+                          title="Delete this group?"
+                          description="Hosts in this group will be ungrouped."
+                          onConfirm={() => handleDeleteGroup(group.id)}
+                          okText="Yes"
+                          cancelText="No"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            type="text"
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Popconfirm>
+                      )}
                     </Space>
                   }
                   style={{ 
@@ -544,7 +577,8 @@ const Hosts = () => {
         title={
           <Space>
             <DatabaseOutlined />
-            {editingHost ? 'Edit Host' : 'Add New Host'}
+            {!hasPermission(currentUser, 'edit') && editingHost ? 'View Host' :
+             editingHost ? 'Edit Host' : 'Add New Host'}
           </Space>
         }
         open={modalVisible}
@@ -559,6 +593,7 @@ const Hosts = () => {
           form={form}
           layout="vertical"
           onFinish={handleSubmit}
+          disabled={!hasPermission(currentUser, 'edit')}
         >
           <Form.Item
             label="Host Name"
@@ -647,11 +682,13 @@ const Hosts = () => {
 
           <Form.Item>
             <Space>
-              <Button type="primary" htmlType="submit">
-                {editingHost ? 'Update' : 'Add'} Host
-              </Button>
+              {hasPermission(currentUser, 'edit') && (
+                <Button type="primary" htmlType="submit">
+                  {editingHost ? 'Update' : 'Add'} Host
+                </Button>
+              )}
               <Button onClick={() => setModalVisible(false)}>
-                Cancel
+                {hasPermission(currentUser, 'edit') ? 'Cancel' : 'Close'}
               </Button>
             </Space>
           </Form.Item>
@@ -731,7 +768,8 @@ Or: 192.168.1.10, 192.168.1.11, 192.168.1.12`}
         title={
           <Space>
             <GroupOutlined />
-            {editingGroup ? 'Edit Host Group' : 'Create Host Group'}
+            {!hasPermission(currentUser, 'edit') && editingGroup ? 'View Host Group' :
+             editingGroup ? 'Edit Host Group' : 'Create Host Group'}
           </Space>
         }
         open={groupModalVisible}
@@ -742,6 +780,7 @@ Or: 192.168.1.10, 192.168.1.11, 192.168.1.12`}
           form={groupForm}
           layout="vertical"
           onFinish={handleGroupSubmit}
+          disabled={!hasPermission(currentUser, 'edit')}
         >
           <Form.Item
             label="Group Name"
@@ -771,11 +810,13 @@ Or: 192.168.1.10, 192.168.1.11, 192.168.1.12`}
 
           <Form.Item>
             <Space>
-              <Button type="primary" htmlType="submit">
-                {editingGroup ? 'Update' : 'Create'} Group
-              </Button>
+              {hasPermission(currentUser, 'edit') && (
+                <Button type="primary" htmlType="submit">
+                  {editingGroup ? 'Update' : 'Create'} Group
+                </Button>
+              )}
               <Button onClick={() => setGroupModalVisible(false)}>
-                Cancel
+                {hasPermission(currentUser, 'edit') ? 'Cancel' : 'Close'}
               </Button>
             </Space>
           </Form.Item>

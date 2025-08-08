@@ -23,11 +23,12 @@ import {
   StarOutlined
 } from '@ant-design/icons';
 import { credentialsAPI } from '../services/api';
+import { hasPermission } from '../utils/permissions';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
-const Credentials = () => {
+const Credentials = ({ currentUser }) => {
   const [credentials, setCredentials] = useState([]);
   const [filteredCredentials, setFilteredCredentials] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -187,29 +188,42 @@ const Credentials = () => {
       width: 150,
       render: (_, record) => (
         <Space>
-          <Button
-            type="primary"
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-          >
-            Edit
-          </Button>
-          <Popconfirm
-            title="Are you sure you want to delete this credential?"
-            onConfirm={() => handleDelete(record.id)}
-            okText="Yes"
-            cancelText="No"
-          >
+          {hasPermission(currentUser, 'edit') ? (
             <Button
               type="primary"
-              danger
               size="small"
-              icon={<DeleteOutlined />}
+              icon={<EditOutlined />}
+              onClick={() => handleEdit(record)}
             >
-              Delete
+              Edit
             </Button>
-          </Popconfirm>
+          ) : (
+            <Button
+              type="primary"
+              size="small"
+              icon={<KeyOutlined />}
+              onClick={() => handleEdit(record)}
+            >
+              View
+            </Button>
+          )}
+          {hasPermission(currentUser, 'delete_credential') && (
+            <Popconfirm
+              title="Are you sure you want to delete this credential?"
+              onConfirm={() => handleDelete(record.id)}
+              okText="Yes"
+              cancelText="No"
+            >
+              <Button
+                type="primary"
+                danger
+                size="small"
+                icon={<DeleteOutlined />}
+              >
+                Delete
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -235,13 +249,15 @@ const Credentials = () => {
               style={{ width: 300 }}
               allowClear
             />
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleCreate}
-            >
-              Add Credential
-            </Button>
+            {hasPermission(currentUser, 'create') && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleCreate}
+              >
+                Add Credential
+              </Button>
+            )}
           </Space>
         </div>
 
@@ -260,7 +276,8 @@ const Credentials = () => {
       </Card>
 
       <Modal
-        title={editingCredential ? 'Edit Credential' : 'Add New Credential'}
+        title={!hasPermission(currentUser, 'edit') && editingCredential ? 'View Credential' :
+               editingCredential ? 'Edit Credential' : 'Add New Credential'}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         footer={null}
@@ -270,6 +287,7 @@ const Credentials = () => {
           form={form}
           layout="vertical"
           onFinish={handleSubmit}
+          disabled={!hasPermission(currentUser, 'edit')}
         >
           <Form.Item
             name="name"
@@ -360,11 +378,13 @@ const Credentials = () => {
           <Form.Item style={{ marginBottom: 0 }}>
             <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
               <Button onClick={() => setModalVisible(false)}>
-                Cancel
+                {hasPermission(currentUser, 'edit') ? 'Cancel' : 'Close'}
               </Button>
-              <Button type="primary" htmlType="submit">
-                {editingCredential ? 'Update' : 'Create'}
-              </Button>
+              {hasPermission(currentUser, 'edit') && (
+                <Button type="primary" htmlType="submit">
+                  {editingCredential ? 'Update' : 'Create'}
+                </Button>
+              )}
             </Space>
           </Form.Item>
         </Form>

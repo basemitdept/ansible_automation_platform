@@ -35,13 +35,14 @@ import {
   EyeInvisibleOutlined
 } from '@ant-design/icons';
 import { webhooksAPI, playbooksAPI, hostsAPI, credentialsAPI, apiTokensAPI } from '../services/api';
+import { hasPermission } from '../utils/permissions';
 import moment from 'moment';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
 
-const Webhooks = () => {
+const Webhooks = ({ currentUser }) => {
   // Webhook states
   const [webhooks, setWebhooks] = useState([]);
   const [playbooks, setPlaybooks] = useState([]);
@@ -416,33 +417,47 @@ const Webhooks = () => {
       key: 'actions',
       render: (_, record) => (
         <Space>
-          <Tooltip title="Edit webhook">
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => handleEdit(record)}
-            />
-          </Tooltip>
-          <Tooltip title="Regenerate token">
+          {hasPermission(currentUser, 'edit') ? (
+            <Tooltip title="Edit webhook">
+              <Button
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => handleEdit(record)}
+              />
+            </Tooltip>
+          ) : (
+            <Tooltip title="View webhook">
+              <Button
+                size="small"
+                icon={<LinkOutlined />}
+                onClick={() => handleEdit(record)}
+              />
+            </Tooltip>
+          )}
+          {hasPermission(currentUser, 'edit') && (
+            <Tooltip title="Regenerate token">
+              <Popconfirm
+                title="Regenerate webhook token?"
+                description="This will invalidate the current webhook URL. Are you sure?"
+                onConfirm={() => handleRegenerateToken(record.id)}
+                okText="Yes"
+                cancelText="No"
+              >
+                <Button size="small" icon={<ReloadOutlined />} />
+              </Popconfirm>
+            </Tooltip>
+          )}
+          {hasPermission(currentUser, 'delete_webhook') && (
             <Popconfirm
-              title="Regenerate webhook token?"
-              description="This will invalidate the current webhook URL. Are you sure?"
-              onConfirm={() => handleRegenerateToken(record.id)}
+              title="Delete webhook?"
+              description="This action cannot be undone."
+              onConfirm={() => handleDelete(record.id)}
               okText="Yes"
               cancelText="No"
             >
-              <Button size="small" icon={<ReloadOutlined />} />
+              <Button size="small" danger icon={<DeleteOutlined />} />
             </Popconfirm>
-          </Tooltip>
-          <Popconfirm
-            title="Delete webhook?"
-            description="This action cannot be undone."
-            onConfirm={() => handleDelete(record.id)}
-            okText="Yes"
-            cancelText="No"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -602,13 +617,15 @@ const Webhooks = () => {
             </Space>
           }
           extra={
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleCreate}
-            >
-              New Webhook
-            </Button>
+            hasPermission(currentUser, 'create') && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleCreate}
+              >
+                New Webhook
+              </Button>
+            )
           }
           className="card-container"
         >
@@ -653,13 +670,15 @@ const Webhooks = () => {
             </Space>
           }
           extra={
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleCreateToken}
-            >
-              New API Token
-            </Button>
+            hasPermission(currentUser, 'create') && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleCreateToken}
+              >
+                New API Token
+              </Button>
+            )
           }
           className="card-container"
         >
@@ -704,7 +723,8 @@ const Webhooks = () => {
         title={
           <Space>
             <LinkOutlined />
-            {editingWebhook ? 'Edit Webhook' : 'Create New Webhook'}
+            {!hasPermission(currentUser, 'edit') && editingWebhook ? 'View Webhook' :
+             editingWebhook ? 'Edit Webhook' : 'Create New Webhook'}
           </Space>
         }
         open={modalVisible}
@@ -716,6 +736,7 @@ const Webhooks = () => {
           form={form}
           layout="vertical"
           onFinish={handleSubmit}
+          disabled={!hasPermission(currentUser, 'edit')}
         >
           <Form.Item
             label="Webhook Name"
@@ -822,11 +843,13 @@ const Webhooks = () => {
 
           <Form.Item>
             <Space>
-              <Button type="primary" htmlType="submit">
-                {editingWebhook ? 'Update' : 'Create'} Webhook
-              </Button>
+              {hasPermission(currentUser, 'edit') && (
+                <Button type="primary" htmlType="submit">
+                  {editingWebhook ? 'Update' : 'Create'} Webhook
+                </Button>
+              )}
               <Button onClick={() => setModalVisible(false)}>
-                Cancel
+                {hasPermission(currentUser, 'edit') ? 'Cancel' : 'Close'}
               </Button>
             </Space>
           </Form.Item>
