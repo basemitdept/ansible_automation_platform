@@ -34,77 +34,68 @@ import { authAPI } from './services/api';
 
 const { Header, Sider, Content } = Layout;
 
-// Custom Cyber Blue dark theme
+// Modern Dark Blue Theme
 const cyberBlueTheme = {
   algorithm: theme.darkAlgorithm,
   token: {
-    // Primary & Info Colors
-    colorPrimary: '#00b0ff', // A vibrant, clear blue
-    colorInfo: '#00b0ff',
-
-    // Background Colors
-    colorBgBase: '#1d1d1d', // Very dark base for high contrast
-    colorBgLayout: '#1d1d1d', // Main layout background
-    colorBgContainer: '#262626', // Cards, modals, etc.
-    colorBgElevated: '#333333', // Pop-ups, dropdowns
-
-    // Border Colors
-    colorBorder: '#434343', // Borders for containers
-    colorBorderSecondary: '#303030', // Borders for table headers, etc.
-    
-    // Text Colors
-    colorText: 'rgba(255, 255, 255, 0.85)', // Primary text
-    colorTextSecondary: 'rgba(255, 255, 255, 0.65)', // Secondary text
-    colorTextTertiary: 'rgba(255, 255, 255, 0.45)', // Tertiary/placeholder text
-
-    // Component-specific customizations
-    colorFillAlter: '#2a2a2a', // Alternating row colors in tables
-    colorFillContent: '#333333', // Background for content areas
-    controlItemBgActive: 'rgba(0, 176, 255, 0.2)', // Active background for buttons/controls
-    controlItemBgHover: 'rgba(255, 255, 255, 0.08)', // Hover background
+    colorPrimary: '#2563eb', // Blue-600
+    colorInfo: '#2563eb',
+    colorBgBase: '#0a192f', // Deep navy
+    colorBgLayout: '#0a192f',
+    colorBgContainer: '#112240', // Card backgrounds
+    colorBgElevated: '#1e293b', // Pop-ups, dropdowns
+    colorBorder: '#334155',
+    colorBorderSecondary: '#1e293b',
+    colorText: 'rgba(224, 242, 254, 0.95)', // Light blue text
+    colorTextSecondary: 'rgba(148, 163, 184, 0.8)', // Muted blue-gray
+    colorTextTertiary: 'rgba(148, 163, 184, 0.5)',
+    colorFillAlter: '#1e293b',
+    colorFillContent: '#112240',
+    controlItemBgActive: 'rgba(37, 99, 235, 0.18)',
+    controlItemBgHover: 'rgba(224, 242, 254, 0.08)',
   },
   components: {
     Layout: {
-      headerBg: '#1d1d1d', // Keep header consistent with layout
-      siderBg: '#262626', // Sider slightly lighter
+      headerBg: '#0a192f',
+      siderBg: '#112240',
     },
     Menu: {
       itemBg: 'transparent',
-      itemSelectedBg: 'rgba(0, 176, 255, 0.2)',
-      itemSelectedColor: '#00b0ff',
-      itemHoverBg: 'rgba(255, 255, 255, 0.08)',
-      itemActiveBg: 'rgba(0, 176, 255, 0.15)',
+      itemSelectedBg: 'rgba(37, 99, 235, 0.18)',
+      itemSelectedColor: '#2563eb',
+      itemHoverBg: 'rgba(224, 242, 254, 0.08)',
+      itemActiveBg: 'rgba(37, 99, 235, 0.12)',
     },
     Card: {
-      colorBgContainer: '#262626',
-      headerBg: 'transparent', // Cleaner look for card headers
-      colorBorderSecondary: '#3a3a3a',
+      colorBgContainer: '#112240',
+      headerBg: 'transparent',
+      colorBorderSecondary: '#1e293b',
     },
     Table: {
-      headerBg: '#333333', // Darker header for tables
-      rowHoverBg: '#3a3a3a',
-      borderColor: '#434343',
+      headerBg: '#1e293b',
+      rowHoverBg: '#334155',
+      borderColor: '#334155',
     },
     Modal: {
-      headerBg: '#262626',
-      contentBg: '#262626',
+      headerBg: '#112240',
+      contentBg: '#112240',
       footerBg: 'transparent',
     },
     Input: {
-      colorBgContainer: '#333333',
-      activeBorderColor: '#00b0ff',
-      hoverBorderColor: '#40c4ff',
+      colorBgContainer: '#1e293b',
+      activeBorderColor: '#2563eb',
+      hoverBorderColor: '#60a5fa',
     },
     Select: {
-      colorBgContainer: '#333333',
-      optionSelectedBg: 'rgba(0, 176, 255, 0.2)',
+      colorBgContainer: '#1e293b',
+      optionSelectedBg: 'rgba(37, 99, 235, 0.18)',
     },
     Button: {
-      defaultBg: '#333333',
-      defaultBorderColor: '#434343',
-      defaultHoverBg: '#3a3a3a',
-      defaultHoverBorderColor: '#00b0ff',
-      primaryShadow: '0 2px 0 rgba(0, 176, 255, 0.1)',
+      defaultBg: '#1e293b',
+      defaultBorderColor: '#334155',
+      defaultHoverBg: '#334155',
+      defaultHoverBorderColor: '#2563eb',
+      primaryShadow: '0 2px 0 rgba(37, 99, 235, 0.10)',
     },
     Switch: {
       trackMinWidth: 44,

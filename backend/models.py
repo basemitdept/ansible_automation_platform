@@ -431,7 +431,7 @@ class ExecutionHistory(db.Model):
     username = db.Column(db.String(255))  # Keep for backward compatibility (SSH username)
     host_list = db.Column(db.Text)  # JSON string of all hosts in multi-host execution
     webhook_id = db.Column(db.String(36))  # Track webhook-triggered executions (no FK until webhooks table ready)
-    original_task_id = db.Column(db.String(36), unique=True, nullable=True) # The original task's UUID
+    original_task_id = db.Column(db.String(36), unique=True, nullable=False) # The original task's UUID
     original_task_serial_id = db.Column(db.Integer)  # Store the original task's sequential ID
     
     playbook = db.relationship('Playbook', backref='history')
@@ -601,3 +601,25 @@ class PlaybookFile(db.Model):
             'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z'
         } 
+
+# Helper: Clean up duplicate ExecutionHistory records before adding unique constraint
+
+def cleanup_duplicate_execution_history():
+    """
+    Removes duplicate ExecutionHistory records, keeping only the first for each original_task_id.
+    Call this before applying a unique constraint migration.
+    """
+    from sqlalchemy import func
+    session = db.session
+    subq = session.query(
+        ExecutionHistory.original_task_id,
+        func.min(ExecutionHistory.id).label('min_id')
+    ).group_by(ExecutionHistory.original_task_id).subquery()
+
+    # Find all IDs to keep
+    keep_ids = set(row.min_id for row in session.query(subq.c.min_id).all())
+
+    # Delete all ExecutionHistory records not in keep_ids
+    deleted = session.query(ExecutionHistory).filter(~ExecutionHistory.id.in_(keep_ids)).delete(synchronize_session=False)
+    session.commit()
+    print(f"Deleted {deleted} duplicate ExecutionHistory records.") 

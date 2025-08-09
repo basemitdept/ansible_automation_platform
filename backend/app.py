@@ -17,6 +17,7 @@ from werkzeug.utils import secure_filename
 import mimetypes
 import shutil
 from functools import wraps
+import psutil
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
@@ -1285,74 +1286,85 @@ def delete_host(host_id):
         db.session.rollback()
         return jsonify({'error': f'Failed to delete host: {str(e)}'}), 500
 
-# Helper function to terminate running task processes
+def _terminate_process_in_background(task_id, process_pid):
+    """Terminates a process in the background and updates the task status."""
+    try:
+        parent = psutil.Process(process_pid)
+        children = parent.children(recursive=True)
+
+        # Terminate children first
+        for child in children:
+            try:
+                child.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        
+        # Terminate parent
+        parent.terminate()
+
+        try:
+            parent.wait(timeout=5)
+        except psutil.TimeoutExpired:
+            # Force kill if still running
+            for child in children:
+                try:
+                    child.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            parent.kill()
+    except psutil.NoSuchProcess:
+        pass  # Process already gone
+    except Exception as e:
+        print(f"Error during background termination of task {task_id}: {e}")
+    finally:
+        # Always remove the process from tracking after termination attempt
+        if task_id in running_processes:
+            del running_processes[task_id]
+
 def terminate_task_process(task_id):
     """Terminate a running process associated with a task ID"""
     try:
-        if task_id in running_processes:
-            process = running_processes[task_id]
-            
-            # Check if process is still running
-            if process.poll() is None:
-                print(f"🚨 Terminating process for task {task_id} (PID: {process.pid})")
-                
-                # Import psutil for better process management
-                import psutil
-                
-                try:
-                    # Get the parent process and all its children
-                    parent_pid = process.pid
-                    parent = psutil.Process(parent_pid)
-                    children = parent.children(recursive=True)
-                    
-                    print(f"🔍 Found {len(children)} child processes to terminate")
-                    
-                    # Terminate children first
-                    for child in children:
-                        try:
-                            print(f"🚨 Terminating child process {child.pid}")
-                            child.terminate()
-                        except psutil.NoSuchProcess:
-                            pass
-                    
-                    # Terminate parent process
-                    parent.terminate()
-                    
-                    # Wait a bit for graceful termination
-                    try:
-                        parent.wait(timeout=5)
-                        print(f"✅ Process {parent_pid} terminated gracefully")
-                    except psutil.TimeoutExpired:
-                        # Force kill if still running
-                        print(f"🚨 Force killing process {parent_pid} and children")
-                        for child in children:
-                            try:
-                                child.kill()
-                            except psutil.NoSuchProcess:
-                                pass
-                        parent.kill()
-                        print(f"✅ Process {parent_pid} force killed")
-                        
-                except psutil.NoSuchProcess:
-                    print(f"⚠️ Process {process.pid} no longer exists")
-                except Exception as e:
-                    print(f"❌ Error terminating process {process.pid}: {e}")
-                    return False
-                
-                # Remove from tracking
-                del running_processes[task_id]
-                return True
-            else:
-                print(f"⚠️ Process for task {task_id} already finished")
-                # Clean up tracking
-                del running_processes[task_id]
+        with app.app_context(): # Ensure we are in an app context for DB operations
+            task = Task.query.get(task_id)
+            if not task:
+                print(f"⚠️ Task {task_id} not found for termination.")
                 return False
-        else:
-            print(f"⚠️ No tracked process found for task {task_id}")
-            return False
+
+            # Atomically update task status to 'terminated' BEFORE attempting to kill process
+            if task.status in ['running', 'pending']:
+                Task.query.filter_by(id=task_id).update({'status': 'terminated', 'finished_at': datetime.utcnow()})
+                db.session.commit()
+                print(f"✅ Task {task_id} status atomically updated to 'terminated'.")
+                socketio.emit('task_update', {
+                    'task_id': str(task_id),
+                    'status': 'terminated',
+                    'message': 'Task terminated by user'
+                }) # Emit update immediately
+
+            if task_id in running_processes:
+                process = running_processes[task_id]
+                
+                # Check if process is still running
+                if process.poll() is None:
+                    print(f"🚨 Scheduling background termination for task {task_id} (PID: {process.pid})")
+                    
+                    # Run termination in a background thread
+                    thread = threading.Thread(
+                        target=_terminate_process_in_background,
+                        args=(task_id, process.pid)
+                    )
+                    thread.start()
+                    
+                    return True
+                else:
+                    print(f"✅ Process for task {task_id} already finished.")
+                    return True
+            else:
+                print(f"⚠️ No running process found for task {task_id}")
+                return False
             
     except Exception as e:
-        print(f"❌ Error in terminate_task_process: {e}")
+        print(f"Error terminating task process {task_id}: {str(e)}")
         return False
 
 # Helper function to check if execution history already exists for a task
@@ -1370,6 +1382,42 @@ def task_history_exists(task_id):
     ).first()
     
     return existing is not None
+
+# Add a global lock for history creation
+history_creation_lock = threading.Lock()
+
+# Thread-safe, atomic history creation/update function
+def create_or_update_history(task, status, output=None, error_output=None):
+    with history_creation_lock:
+        with app.app_context():
+            existing_history = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
+            if existing_history:
+                # Only update if not already terminated
+                if existing_history.status != 'terminated':
+                    existing_history.status = status
+                    existing_history.finished_at = datetime.utcnow()
+                    if output:
+                        existing_history.output = output
+                    if error_output:
+                        existing_history.error_output = error_output
+                    db.session.commit()
+            else:
+                history = ExecutionHistory(
+                    playbook_id=task.playbook_id,
+                    host_id=task.host_id,
+                    user_id=task.user_id,
+                    status=status,
+                    started_at=task.started_at or datetime.utcnow(),
+                    finished_at=datetime.utcnow(),
+                    output=output or task.output,
+                    error_output=error_output or task.error_output,
+                    username=task.user.username if task.user else 'unknown',
+                    host_list=task.host_list,
+                    original_task_id=task.id,
+                    original_task_serial_id=task.get_global_serial_id()
+                )
+                db.session.add(history)
+                db.session.commit()
 
 # Helper function to create execution history for terminated tasks
 def create_terminated_task_history(task):
@@ -1569,7 +1617,7 @@ def delete_task(task_id):
             print(f"📝 Task {task_id} status updated to terminated, creating execution history...")
             
             # Create execution history record for terminated task
-            create_terminated_task_history(task)
+            create_or_update_history(task, 'terminated', error_output='Task terminated by user')
             
             # Emit status update
             if terminated_task:
@@ -1610,7 +1658,7 @@ def terminate_webhook_task(task_id):
                 task.finished_at = datetime.utcnow()
             task.error_output = 'Task terminated by user'
             db.session.commit()
-            create_terminated_task_history(task)
+            create_or_update_history(task, 'terminated', error_output='Task terminated by user')
             socketio.emit('task_update', {
                 'task_id': str(task_id),
                 'status': 'terminated',

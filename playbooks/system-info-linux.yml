@@ -4,6 +4,9 @@
   become: yes
   tasks:
     - name: Get hostname
+      command: sleep 10
+      register: hostname_result
+    - name: Get hostname
       command: hostname
       register: hostname_result
     
