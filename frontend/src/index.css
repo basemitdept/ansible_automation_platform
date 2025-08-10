@@ -5,7 +5,7 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f0f2f5;
+  background-color: #1a1a1a;
 }
 
 code {
@@ -23,7 +23,7 @@ code {
 
 .ant-layout-content {
   padding: 24px;
-  background: #f0f2f5;
+  background: #1a1a1a;
 }
 
 .card-container {
@@ -31,7 +31,7 @@ code {
 }
 
 .task-output {
-  background: #1f1f1f;
+  background: #2d2d2d;
   color: #fff;
   font-family: 'Courier New', monospace;
   font-size: 12px;
@@ -39,6 +39,7 @@ code {
   border-radius: 6px;
   max-height: 400px;
   overflow-y: auto;
+  border: 1px solid #4a4a4a;
 }
 
 .task-output .output-line {
@@ -55,26 +56,31 @@ code {
 }
 
 .status-pending {
-  background: #faad14;
-  color: #fff;
+  background: #fbbf24;
+  color: #1a1a1a;
+  font-weight: 600;
 }
 
 .status-running {
-  background: #1890ff;
+  background: #3b82f6;
   color: #fff;
+  font-weight: 600;
 }
 
 .status-completed {
-  background: #52c41a;
+  background: #10b981;
   color: #fff;
+  font-weight: 600;
 }
 
 .status-partial {
-  background: #fa8c16;
-  color: #fff;
+  background: #f59e0b;
+  color: #1a1a1a;
+  font-weight: 600;
 }
 
 .status-failed {
-  background: #ff4d4f;
+  background: #ef4444;
   color: #fff;
+  font-weight: 600;
 } 

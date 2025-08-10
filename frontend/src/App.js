@@ -34,68 +34,68 @@ import { authAPI } from './services/api';
 
 const { Header, Sider, Content } = Layout;
 
-// Modern Dark Blue Theme
+// Light Dark Theme - Better contrast and readability
 const cyberBlueTheme = {
   algorithm: theme.darkAlgorithm,
   token: {
-    colorPrimary: '#2563eb', // Blue-600
-    colorInfo: '#2563eb',
-    colorBgBase: '#0a192f', // Deep navy
-    colorBgLayout: '#0a192f',
-    colorBgContainer: '#112240', // Card backgrounds
-    colorBgElevated: '#1e293b', // Pop-ups, dropdowns
-    colorBorder: '#334155',
-    colorBorderSecondary: '#1e293b',
-    colorText: 'rgba(224, 242, 254, 0.95)', // Light blue text
-    colorTextSecondary: 'rgba(148, 163, 184, 0.8)', // Muted blue-gray
-    colorTextTertiary: 'rgba(148, 163, 184, 0.5)',
-    colorFillAlter: '#1e293b',
-    colorFillContent: '#112240',
-    controlItemBgActive: 'rgba(37, 99, 235, 0.18)',
-    controlItemBgHover: 'rgba(224, 242, 254, 0.08)',
+    colorPrimary: '#3b82f6', // Brighter blue for better visibility
+    colorInfo: '#3b82f6',
+    colorBgBase: '#1a1a1a', // Lighter dark background
+    colorBgLayout: '#1a1a1a',
+    colorBgContainer: '#2d2d2d', // Lighter card backgrounds
+    colorBgElevated: '#3a3a3a', // Lighter pop-ups, dropdowns
+    colorBorder: '#4a4a4a', // Lighter borders
+    colorBorderSecondary: '#3a3a3a',
+    colorText: 'rgba(255, 255, 255, 0.95)', // Pure white text for better contrast
+    colorTextSecondary: 'rgba(200, 200, 200, 0.85)', // Lighter secondary text
+    colorTextTertiary: 'rgba(180, 180, 180, 0.7)',
+    colorFillAlter: '#3a3a3a',
+    colorFillContent: '#2d2d2d',
+    controlItemBgActive: 'rgba(59, 130, 246, 0.25)',
+    controlItemBgHover: 'rgba(255, 255, 255, 0.08)',
   },
   components: {
     Layout: {
-      headerBg: '#0a192f',
-      siderBg: '#112240',
+      headerBg: '#1a1a1a',
+      siderBg: '#2d2d2d',
     },
     Menu: {
       itemBg: 'transparent',
-      itemSelectedBg: 'rgba(37, 99, 235, 0.18)',
-      itemSelectedColor: '#2563eb',
-      itemHoverBg: 'rgba(224, 242, 254, 0.08)',
-      itemActiveBg: 'rgba(37, 99, 235, 0.12)',
+      itemSelectedBg: 'rgba(59, 130, 246, 0.25)',
+      itemSelectedColor: '#3b82f6',
+      itemHoverBg: 'rgba(255, 255, 255, 0.08)',
+      itemActiveBg: 'rgba(59, 130, 246, 0.15)',
     },
     Card: {
-      colorBgContainer: '#112240',
+      colorBgContainer: '#2d2d2d',
       headerBg: 'transparent',
-      colorBorderSecondary: '#1e293b',
+      colorBorderSecondary: '#3a3a3a',
     },
     Table: {
-      headerBg: '#1e293b',
-      rowHoverBg: '#334155',
-      borderColor: '#334155',
+      headerBg: '#3a3a3a',
+      rowHoverBg: '#4a4a4a',
+      borderColor: '#4a4a4a',
     },
     Modal: {
-      headerBg: '#112240',
-      contentBg: '#112240',
+      headerBg: '#2d2d2d',
+      contentBg: '#2d2d2d',
       footerBg: 'transparent',
     },
     Input: {
-      colorBgContainer: '#1e293b',
-      activeBorderColor: '#2563eb',
+      colorBgContainer: '#3a3a3a',
+      activeBorderColor: '#3b82f6',
       hoverBorderColor: '#60a5fa',
     },
     Select: {
-      colorBgContainer: '#1e293b',
-      optionSelectedBg: 'rgba(37, 99, 235, 0.18)',
+      colorBgContainer: '#3a3a3a',
+      optionSelectedBg: 'rgba(59, 130, 246, 0.25)',
     },
     Button: {
-      defaultBg: '#1e293b',
-      defaultBorderColor: '#334155',
-      defaultHoverBg: '#334155',
-      defaultHoverBorderColor: '#2563eb',
-      primaryShadow: '0 2px 0 rgba(37, 99, 235, 0.10)',
+      defaultBg: '#3a3a3a',
+      defaultBorderColor: '#4a4a4a',
+      defaultHoverBg: '#4a4a4a',
+      defaultHoverBorderColor: '#3b82f6',
+      primaryShadow: '0 2px 0 rgba(59, 130, 246, 0.15)',
     },
     Switch: {
       trackMinWidth: 44,
