@@ -360,7 +360,7 @@ class Webhook(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(255), nullable=False)
     playbook_id = db.Column(db.String(36), db.ForeignKey('playbooks.id'), nullable=False)
-    host_ids = db.Column(db.Text, nullable=False)  # JSON array of host IDs
+    host_ids = db.Column(db.Text, nullable=True)  # JSON array of host IDs (optional)
     token = db.Column(db.String(64), nullable=False, unique=True)  # Unique webhook token
     enabled = db.Column(db.Boolean, default=True)
     default_variables = db.Column(db.Text)  # JSON object of default variable values

@@ -768,13 +768,12 @@ const Webhooks = ({ currentUser }) => {
           </Form.Item>
 
           <Form.Item
-            label="Target Hosts"
+            label="Target Hosts (Optional)"
             name="host_ids"
-            rules={[{ required: true, message: 'Please select target hosts' }]}
           >
             <Select
               mode="multiple"
-              placeholder="Select hosts to execute playbook on"
+              placeholder="Select hosts to execute playbook on (optional)"
               style={{ width: '100%' }}
               filterOption={(input, option) =>
                 option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0

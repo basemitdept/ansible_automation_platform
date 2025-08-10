@@ -2249,26 +2249,53 @@ def trigger_webhook(webhook_token):
     if not playbook:
         return jsonify({'error': 'Playbook not found'}), 404
     
-    # Parse host IDs
-    try:
-        host_ids = json.loads(webhook.host_ids) if webhook.host_ids else []
-    except:
-        return jsonify({'error': 'Invalid host configuration'}), 500
-    
-    if not host_ids:
-        return jsonify({'error': 'No hosts configured for webhook'}), 400
-    
-    # Get hosts - store as dictionaries to avoid session issues
+    # Get hosts - priority: 1) from request payload, 2) from webhook config
     hosts = []
     host_objects = []
-    for host_id in host_ids:
-        host = Host.query.get(host_id)
-        if host:
-            hosts.append(host)
-            host_objects.append(host.to_dict())  # Store as dict for thread safety
     
-    if not hosts:
-        return jsonify({'error': 'No valid hosts found'}), 400
+    # Priority 1: Check if hosts are provided in the request payload
+    if 'hosts' in data and data['hosts']:
+        request_hosts = data['hosts']
+        if isinstance(request_hosts, list):
+            for host_info in request_hosts:
+                if isinstance(host_info, dict):
+                    # Host provided as object (with hostname, etc.)
+                    host_objects.append(host_info)
+                elif isinstance(host_info, str):
+                    # Host provided as ID, look it up in database
+                    host = Host.query.get(host_info)
+                    if host:
+                        hosts.append(host)
+                        host_objects.append(host.to_dict())
+            
+            if not host_objects:
+                return jsonify({'error': 'No valid hosts provided in request'}), 400
+    
+    # Priority 2: Use configured hosts from webhook if no hosts in request
+    elif webhook.host_ids:
+        try:
+            host_ids = json.loads(webhook.host_ids)
+            for host_id in host_ids:
+                host = Host.query.get(host_id)
+                if host:
+                    hosts.append(host)
+                    host_objects.append(host.to_dict())
+            
+            if not hosts:
+                return jsonify({'error': 'No valid configured hosts found'}), 400
+        except:
+            return jsonify({'error': 'Invalid host configuration'}), 500
+    
+    # Priority 3: No hosts provided anywhere - this is now allowed for playbooks that don't need specific hosts
+    else:
+        # Create a minimal host entry for playbooks that run locally or don't need specific hosts
+        host_objects = [{
+            'id': 'localhost',
+            'name': 'localhost',
+            'hostname': 'localhost',
+            'port': 22,
+            'os_type': 'linux'
+        }]
     
     # Merge default variables with request variables
     variables = {}
@@ -2307,12 +2334,19 @@ def trigger_webhook(webhook_token):
     # Note: password can be None - Ansible will use SSH keys if no password provided
     
     # Create task for execution
-    primary_host = hosts[0]
+    # Use the first database host's ID, or None if using dynamic hosts
+    if hosts:
+        primary_host = hosts[0]
+        primary_host_id = primary_host.id
+    else:
+        # No database host objects - set to None for dynamic hosts from request
+        primary_host_id = None
+    
     host_list_json = json.dumps(host_objects)
     
     task = Task(
         playbook_id=playbook.id,
-        host_id=primary_host.id,
+        host_id=primary_host_id,
         user_id=webhook.user_id,  # Use the webhook creator's user ID
         webhook_id=webhook.id,  # Track which webhook triggered this task
         status='pending',
@@ -2349,7 +2383,7 @@ def trigger_webhook(webhook_token):
             'message': 'Webhook triggered successfully',
             'task_id': str(task_id),
             'playbook': playbook.name,
-            'hosts': len(hosts),
+            'hosts': len(host_objects),
             'variables': variables
         }), 200
         
@@ -2441,6 +2475,241 @@ def run_webhook_playbook(task_id, playbook_data, host_objects, username, passwor
                 )
                 db.session.add(history)
                 db.session.commit()
+
+def get_hostname_from_host(host):
+    """Safely extract hostname from host object or dict"""
+    if hasattr(host, 'hostname'):
+        return host.hostname
+    elif hasattr(host, 'get') and 'hostname' in host:
+        return host['hostname']
+    elif isinstance(host, dict) and 'hostname' in host:
+        return host['hostname']
+    else:
+        return str(host)
+
+def analyze_ansible_output_for_partial_success(output_text, hosts):
+    """
+    Analyze Ansible output to determine if we have partial success
+    (some hosts succeeded, some failed)
+    
+    Handles two scenarios:
+    1. Normal inventory hosts (PLAY RECAP shows each host)
+    2. Variable-based hosts (hosts passed as variables, need to parse task output)
+    
+    Returns:
+        tuple: (status, success_count, failed_count, host_results)
+        status: 'completed', 'failed', or 'partial'
+        success_count: number of hosts that succeeded
+        failed_count: number of hosts that failed
+        host_results: dict mapping hostnames to their status
+    """
+    if not output_text or not hosts:
+        return 'failed', 0, 0, {}
+    
+    host_results = {}
+    total_hosts = len(hosts)
+    
+    # Initialize all hosts as unknown
+    for host in hosts:
+        hostname = get_hostname_from_host(host)
+        host_results[hostname] = 'unknown'
+    
+    # Check if this looks like variable-based host execution
+    # Look for any of our target hosts mentioned in the output (not just in PLAY RECAP)
+    is_variable_hosts = False
+    for host in hosts:
+        hostname = get_hostname_from_host(host)
+        if hostname in output_text and hostname != 'localhost':
+            print(f"🔍 DEBUG: Found variable-based host execution - {hostname} found in output")
+            is_variable_hosts = True
+            break
+    
+    # Also check for common variable-based patterns
+    if not is_variable_hosts:
+        variable_patterns = [
+            'delegate_to:', '(item=', '-> ', 'localhost]', 
+            '"host":', '"status":', 'loop:', 'with_items:'
+        ]
+        if any(pattern in output_text for pattern in variable_patterns):
+            print(f"🔍 DEBUG: Found variable-based pattern in output")
+            is_variable_hosts = True
+    
+    if is_variable_hosts:
+        # Parse task output for variable-based hosts
+        result = analyze_variable_hosts_output(output_text, hosts)
+        # If variable analysis found meaningful results, use it
+        if result[1] > 0 or result[2] > 0:  # success_count > 0 or failed_count > 0
+            return result
+        # Otherwise, fall through to normal analysis
+    
+    # Look for Ansible PLAY RECAP section which shows final results (normal inventory hosts)
+    lines = output_text.split('\n')
+    in_recap = False
+    
+    for line in lines:
+        # Start parsing after PLAY RECAP
+        if 'PLAY RECAP' in line:
+            in_recap = True
+            continue
+        
+        # Stop parsing if we hit another section or empty lines after recap
+        if in_recap and line.strip() == '':
+            # Skip empty lines within recap
+            continue
+            
+        if in_recap and line.strip():
+            # Parse lines like: "hostname : ok=2 changed=1 unreachable=0 failed=0"
+            # Also handle lines like: "hostname               : ok=2    changed=1    unreachable=0    failed=0"
+            if ':' in line and ('ok=' in line or 'failed=' in line or 'unreachable=' in line):
+                # Split on the first colon
+                colon_index = line.find(':')
+                hostname = line[:colon_index].strip()
+                stats = line[colon_index + 1:].strip()
+                
+                # Parse the statistics
+                failed_count = 0
+                unreachable_count = 0
+                ok_count = 0
+                changed_count = 0
+                
+                # Extract numbers using regex-like approach
+                import re
+                
+                failed_match = re.search(r'failed=(\d+)', stats)
+                if failed_match:
+                    failed_count = int(failed_match.group(1))
+                
+                unreachable_match = re.search(r'unreachable=(\d+)', stats)
+                if unreachable_match:
+                    unreachable_count = int(unreachable_match.group(1))
+                
+                ok_match = re.search(r'ok=(\d+)', stats)
+                if ok_match:
+                    ok_count = int(ok_match.group(1))
+                
+                changed_match = re.search(r'changed=(\d+)', stats)
+                if changed_match:
+                    changed_count = int(changed_match.group(1))
+                
+                # Determine host status
+                if failed_count > 0 or unreachable_count > 0:
+                    host_results[hostname] = 'failed'
+                elif ok_count > 0 or changed_count > 0:
+                    host_results[hostname] = 'success'
+                else:
+                    host_results[hostname] = 'unknown'
+                    
+                print(f"🔍 Parsed {hostname}: ok={ok_count}, changed={changed_count}, failed={failed_count}, unreachable={unreachable_count} → {host_results[hostname]}")
+            
+            # Stop parsing if we encounter a line that doesn't look like a recap entry
+            elif in_recap and not line.startswith(' '):
+                # This might be the start of a new section, stop parsing recap
+                break
+    
+    # Count results
+    success_count = sum(1 for status in host_results.values() if status == 'success')
+    failed_count = sum(1 for status in host_results.values() if status == 'failed')
+    unknown_count = sum(1 for status in host_results.values() if status == 'unknown')
+    
+    # Determine overall status
+    if failed_count == 0 and success_count > 0:
+        # All hosts succeeded
+        overall_status = 'completed'
+    elif success_count == 0:
+        # All hosts failed or unknown
+        overall_status = 'failed'
+    elif success_count > 0 and failed_count > 0:
+        # Some succeeded, some failed
+        overall_status = 'partial'
+    else:
+        # All unknown - treat as failed
+        overall_status = 'failed'
+    
+    print(f"📊 Ansible execution analysis:")
+    print(f"   Total hosts: {total_hosts}")
+    print(f"   Successful: {success_count}")
+    print(f"   Failed: {failed_count}")
+    print(f"   Unknown: {unknown_count}")
+    print(f"   Overall status: {overall_status}")
+    
+    return overall_status, success_count, failed_count, host_results
+
+def analyze_variable_hosts_output(output_text, hosts):
+    """
+    Analyze Ansible output when hosts are passed as variables rather than inventory.
+    Look for task-level success/failure indicators for each host.
+    """
+    host_results = {}
+    
+    # Initialize all hosts as unknown
+    for host in hosts:
+        hostname = get_hostname_from_host(host)
+        host_results[hostname] = 'unknown'
+    
+    print(f"🔍 DEBUG: Analyzing variable-based hosts: {list(host_results.keys())}")
+    
+    lines = output_text.split('\n')
+    
+    # Look for task results that mention specific hosts
+    for line in lines:
+        for host in hosts:
+            hostname = get_hostname_from_host(host)
+            
+            if hostname in line:
+                # Check for success indicators
+                if any(indicator in line.lower() for indicator in ['ok:', 'changed:', 'success', 'completed']):
+                    if 'failed' not in line.lower() and 'error' not in line.lower():
+                        host_results[hostname] = 'success'
+                        print(f"🔍 DEBUG: Found success for {hostname}: {line.strip()}")
+                
+                # Check for failure indicators
+                elif any(indicator in line.lower() for indicator in ['failed:', 'fatal:', 'error', 'unreachable', 'timeout']):
+                    host_results[hostname] = 'failed'
+                    print(f"🔍 DEBUG: Found failure for {hostname}: {line.strip()}")
+    
+    # Also look for structured output like "host1: success" or "host1: failed"
+    for line in lines:
+        for host in hosts:
+            hostname = get_hostname_from_host(host)
+            
+            # Look for patterns like "hostname: status" or "hostname - status"
+            if f"{hostname}:" in line or f"{hostname} -" in line or f"{hostname}=" in line:
+                if any(success_word in line.lower() for success_word in ['success', 'ok', 'completed', 'pass']):
+                    host_results[hostname] = 'success'
+                    print(f"🔍 DEBUG: Pattern match success for {hostname}: {line.strip()}")
+                elif any(fail_word in line.lower() for fail_word in ['fail', 'error', 'timeout', 'unreachable']):
+                    host_results[hostname] = 'failed'
+                    print(f"🔍 DEBUG: Pattern match failure for {hostname}: {line.strip()}")
+    
+    # Count results
+    success_count = sum(1 for status in host_results.values() if status == 'success')
+    failed_count = sum(1 for status in host_results.values() if status == 'failed')
+    unknown_count = sum(1 for status in host_results.values() if status == 'unknown')
+    
+    # Determine overall status
+    if failed_count == 0 and success_count > 0:
+        overall_status = 'completed'
+    elif success_count == 0:
+        overall_status = 'failed'
+    elif success_count > 0 and failed_count > 0:
+        overall_status = 'partial'
+    else:
+        # All unknown - try to infer from overall context
+        if 'failed' in output_text.lower() and 'success' in output_text.lower():
+            overall_status = 'partial'
+        elif 'error' in output_text.lower() or 'failed' in output_text.lower():
+            overall_status = 'failed'
+        else:
+            overall_status = 'completed'
+    
+    print(f"📊 Variable hosts analysis:")
+    print(f"   Total hosts: {len(hosts)}")
+    print(f"   Successful: {success_count}")
+    print(f"   Failed: {failed_count}")
+    print(f"   Unknown: {unknown_count}")
+    print(f"   Overall status: {overall_status}")
+    
+    return overall_status, success_count, failed_count, host_results
 
 def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username, password, variables=None, webhook_id=None):
     """
@@ -2758,10 +3027,52 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
         
         # Atomically update task status to prevent race conditions with termination
         with app.app_context():
-            # Determine the final status
-            final_status = 'completed' if process.returncode == 0 else 'failed'
+            # Prepare output
             final_output = '\n'.join(output_lines)
             final_error = '\n'.join(error_lines) if error_lines else None
+            
+            # Debug logging for partial success
+            print(f"🔍 DEBUG: Analyzing execution results for task {task_id}")
+            print(f"   Number of hosts: {len(hosts)}")
+            print(f"   Process return code: {process.returncode}")
+            print(f"   Host objects: {[get_hostname_from_host(h) for h in hosts]}")
+            
+            # Always try to analyze for partial success if we have multiple hosts or Ansible output
+            should_analyze = (
+                len(hosts) > 1 or  # Multiple hosts
+                'PLAY RECAP' in final_output or  # Has Ansible output
+                any(get_hostname_from_host(h) in final_output for h in hosts)  # Host mentioned in output
+            )
+            
+            if should_analyze:
+                print(f"🔍 DEBUG: Analyzing output for partial success...")
+                analyzed_status, success_count, failed_count, host_results = analyze_ansible_output_for_partial_success(final_output, hosts)
+                
+                print(f"🔍 DEBUG: Analysis results - status: {analyzed_status}, success: {success_count}, failed: {failed_count}")
+                
+                # Use analyzed status if we got meaningful results
+                if success_count > 0 or failed_count > 0:
+                    final_status = analyzed_status
+                    print(f"🔍 DEBUG: Using analyzed status: {final_status}")
+                    
+                    # Add summary to output if partial success or if we have detailed results
+                    if final_status == 'partial' or (success_count > 0 and failed_count > 0):
+                        summary = f"\n\n📊 EXECUTION SUMMARY:\n"
+                        summary += f"✅ Successful hosts: {success_count}\n"
+                        summary += f"❌ Failed hosts: {failed_count}\n"
+                        summary += f"📋 Host Details:\n"
+                        for hostname, status in host_results.items():
+                            icon = "✅" if status == 'success' else "❌" if status == 'failed' else "❓"
+                            summary += f"   {icon} {hostname}: {status}\n"
+                        final_output += summary
+                else:
+                    # Fallback to exit code if analysis didn't find clear results
+                    final_status = 'completed' if process.returncode == 0 else 'failed'
+                    print(f"🔍 DEBUG: No meaningful analysis results, using exit code: {final_status}")
+            else:
+                # No analysis needed - use simple exit code logic
+                final_status = 'completed' if process.returncode == 0 else 'failed'
+                print(f"🔍 DEBUG: No analysis criteria met, using exit code: {final_status}")
             
             # Only update the task if its status is currently 'running'
             updated_rows = Task.query.filter_by(id=task_id, status='running').update({

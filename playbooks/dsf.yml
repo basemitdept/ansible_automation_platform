@@ -1,7 +1,7 @@
 ---
 - name: Sample Linux playbook
-  hosts: "{{ips}}"
+  hosts: all
   become: yes
   tasks:
     - name: Update system packages
-      command: echo "{{uu}}"
+      command: hostname

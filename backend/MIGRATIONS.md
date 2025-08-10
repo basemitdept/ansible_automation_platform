@@ -21,6 +21,23 @@ sudo docker-compose exec backend python3 add_original_task_serial_id.py
 
 ---
 
+### 2. `make_webhook_hosts_optional.py`
+**Purpose**: Make `host_ids` column nullable in `webhooks` table
+
+**What it does**:
+- Changes `host_ids` column from `NOT NULL` to `NULL` in webhooks table
+- Allows webhooks to be created without specifying target hosts
+- When no hosts are specified, webhooks default to localhost execution
+
+**Usage**:
+```bash
+sudo docker-compose exec backend python3 make_webhook_hosts_optional.py
+```
+
+**Status**: ✅ Applied
+
+---
+
 ## How to Run Migrations
 
 ### For Development:
@@ -49,3 +66,4 @@ sudo docker-compose exec backend python3 <migration_file.py>
 | Date | Migration | Description | Status |
 |------|-----------|-------------|---------|
 | 2025-08-07 | `add_original_task_serial_id.py` | Add original task serial ID preservation | ✅ Applied |
+| 2025-01-09 | `make_webhook_hosts_optional.py` | Make webhook host_ids optional | 🟡 Pending |
