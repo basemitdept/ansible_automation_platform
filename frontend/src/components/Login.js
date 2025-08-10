@@ -15,12 +15,11 @@ import {
   UserOutlined,
   LockOutlined,
   RocketOutlined,
-  SafetyOutlined,
   LoginOutlined
 } from '@ant-design/icons';
 import { authAPI } from '../services/api';
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 
 const Login = ({ onLoginSuccess }) => {
   const [form] = Form.useForm();
@@ -51,9 +50,10 @@ const Login = ({ onLoginSuccess }) => {
 
   return (
     <div
+      className="login-dark"
       style={{
         minHeight: '100vh',
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        background: '#1a1a1a',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -63,55 +63,28 @@ const Login = ({ onLoginSuccess }) => {
       <Row gutter={[32, 32]} style={{ width: '100%', maxWidth: '1200px' }}>
         {/* Left side - Branding */}
         <Col xs={24} lg={12}>
-          <div style={{ 
-            textAlign: 'center', 
-            color: 'white',
+          <div style={{
+            textAlign: 'center',
+            color: 'rgba(255,255,255,0.95)',
             padding: '40px 20px'
           }}>
-            <div style={{ marginBottom: '30px' }}>
-              <RocketOutlined style={{ 
-                fontSize: '80px', 
-                color: 'white',
+            <div style={{ marginBottom: '10px' }}>
+              <RocketOutlined style={{
+                fontSize: '80px',
+                color: '#69b1ff',
                 marginBottom: '20px',
                 display: 'block'
               }} />
-              <Title level={1} style={{ 
-                color: 'white', 
+              <Title level={2} style={{
+                color: 'rgba(255,255,255,0.98)',
                 margin: 0,
-                fontSize: '48px',
+                fontSize: '36px',
                 fontWeight: 'bold'
               }}>
                 Ansible Automation Platform
               </Title>
             </div>
-            
-            <Paragraph style={{ 
-              color: 'rgba(255, 255, 255, 0.9)', 
-              fontSize: '20px',
-              lineHeight: '1.6',
-              marginBottom: '30px'
-            }}>
-              Automate your infrastructure with confidence. Execute playbooks, 
-              manage hosts, and monitor your automation workflow with our 
-              powerful web-based platform.
-            </Paragraph>
-
-            <div style={{ marginTop: '40px' }}>
-              <Space direction="vertical" size="large" style={{ width: '100%' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <SafetyOutlined style={{ fontSize: '24px', marginRight: '12px' }} />
-                  <Text style={{ color: 'white', fontSize: '16px' }}>
-                    Secure Authentication & Role-Based Access
-                  </Text>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <RocketOutlined style={{ fontSize: '24px', marginRight: '12px' }} />
-                  <Text style={{ color: 'white', fontSize: '16px' }}>
-                    Real-time Monitoring & Execution Tracking
-                  </Text>
-                </div>
-              </Space>
-            </div>
+            {/* Removed descriptive marketing text and feature bullets for a cleaner login */}
           </div>
         </Col>
 
@@ -128,21 +101,23 @@ const Login = ({ onLoginSuccess }) => {
                 width: '100%',
                 maxWidth: '400px',
                 borderRadius: '16px',
-                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.15)',
-                border: 'none'
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)',
+                border: '1px solid #2f2f2f',
+                backgroundColor: '#2d2d2d',
+                color: 'rgba(255,255,255,0.95)'
               }}
               bodyStyle={{ padding: '40px' }}
             >
               <div style={{ textAlign: 'center', marginBottom: '30px' }}>
                 <LoginOutlined style={{ 
                   fontSize: '48px', 
-                  color: '#1890ff',
+                  color: '#69b1ff',
                   marginBottom: '16px'
                 }} />
-                <Title level={2} style={{ margin: 0, color: '#262626' }}>
+                <Title level={2} style={{ margin: 0, color: 'rgba(255,255,255,0.95)' }}>
                   Welcome Back
                 </Title>
-                <Text type="secondary" style={{ fontSize: '16px' }}>
+                <Text style={{ fontSize: '16px', color: 'rgba(255,255,255,0.65)' }}>
                   Sign in to your account
                 </Text>
               </div>
@@ -151,7 +126,7 @@ const Login = ({ onLoginSuccess }) => {
                 <Alert
                   message={error}
                   type="error"
-                  style={{ marginBottom: '20px' }}
+                  style={{ marginBottom: '20px', backgroundColor: '#2b1a1a', border: '1px solid #442222', color: '#ffccc7' }}
                   showIcon
                 />
               )}
@@ -172,9 +147,9 @@ const Login = ({ onLoginSuccess }) => {
                   ]}
                 >
                   <Input
-                    prefix={<UserOutlined style={{ color: '#1890ff' }} />}
+                    prefix={<UserOutlined style={{ color: '#69b1ff' }} />}
                     placeholder="Enter your username"
-                    style={{ borderRadius: '8px' }}
+                    style={{ borderRadius: '8px', backgroundColor: '#1f1f1f', border: '1px solid #3a3a3a', color: '#ffffff' }}
                   />
                 </Form.Item>
 
@@ -187,9 +162,9 @@ const Login = ({ onLoginSuccess }) => {
                   ]}
                 >
                   <Input.Password
-                    prefix={<LockOutlined style={{ color: '#1890ff' }} />}
+                    prefix={<LockOutlined style={{ color: '#69b1ff' }} />}
                     placeholder="Enter your password"
-                    style={{ borderRadius: '8px' }}
+                    style={{ borderRadius: '8px', backgroundColor: '#1f1f1f', border: '1px solid #3a3a3a', color: '#ffffff' }}
                   />
                 </Form.Item>
 
