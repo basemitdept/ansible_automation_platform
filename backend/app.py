@@ -1854,6 +1854,11 @@ def delete_history(history_id):
 @app.route('/api/execute', methods=['POST'])
 @jwt_required()
 def execute_playbook():
+    import traceback
+    traceback.print_stack()
+    print("=" * 80)
+    print("🚨🚨🚨 EXECUTE ENDPOINT HIT - MANUAL EXECUTION STARTING 🚨🚨🚨")
+    print("=" * 80)
     print(f"🎯🎯🎯 EXECUTE ENDPOINT CALLED - PROCESSING PLAYBOOK EXECUTION REQUEST 🎯🎯🎯")
     print(f"🎯 REQUEST DATA: {request.get_json()}")
     
@@ -2391,6 +2396,7 @@ def trigger_webhook(webhook_token):
         return jsonify({'error': f'Failed to trigger webhook: {str(e)}'}), 500
 
 def run_webhook_playbook(task_id, playbook_data, host_objects, username, password, variables=None, webhook_id=None):
+    print("🔵🔵🔵 WEBHOOK EXECUTION FUNCTION CALLED 🔵🔵🔵")
     """
     Execute playbook for webhook with proper session management.
     Uses IDs and dictionaries instead of ORM objects to avoid session issues.
@@ -2712,6 +2718,9 @@ def analyze_variable_hosts_output(output_text, hosts):
     return overall_status, success_count, failed_count, host_results
 
 def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username, password, variables=None, webhook_id=None):
+    import logging
+    logging.warning("🔴🔴🔴 INTERNAL MULTI-HOST FUNCTION CALLED 🔴🔴🔴")
+    print("🔴🔴🔴 INTERNAL MULTI-HOST FUNCTION CALLED 🔴🔴🔴", flush=True)
     """
     Internal function that does the actual ansible execution.
     Separated to avoid session issues.
@@ -3315,10 +3324,12 @@ def extract_artifacts_from_tree(artifacts_dir, execution_id, hosts):
     Extract artifacts from Ansible --tree output directory.
     This captures all register variables and task results.
     """
+    print(f"🌳🌳🌳 EXTRACT_ARTIFACTS_FROM_TREE CALLED! Dir: {artifacts_dir}, Execution: {execution_id}")
     artifacts = []
     
     try:
         if not os.path.exists(artifacts_dir):
+            print(f"🌳 Tree directory does not exist: {artifacts_dir}")
             return artifacts
             
         for host in hosts:
@@ -3333,6 +3344,10 @@ def extract_artifacts_from_tree(artifacts_dir, execution_id, hosts):
                         for task_name, task_result in host_results.items():
                             if isinstance(task_result, dict):
                                 # Create artifact for each task result
+                                print(f"🌳 TREE ARTIFACT CREATION: {task_name} for {host.hostname}")
+                                print(f"🌳 Tree task_result keys: {list(task_result.keys()) if isinstance(task_result, dict) else 'Not a dict'}")
+                                print(f"🌳 Tree task_result sample: {str(task_result)[:200]}...")
+                                
                                 artifact = Artifact(
                                     execution_id=execution_id,
                                     task_name=task_name,
@@ -3342,6 +3357,7 @@ def extract_artifacts_from_tree(artifacts_dir, execution_id, hosts):
                                     task_status=task_result.get('changed', False) and 'changed' or 'ok'
                                 )
                                 artifacts.append(artifact)
+                                print(f"✅ Created tree artifact: {task_name}")
                                 
                 except Exception as e:
                     print(f"Error reading artifacts for host {host.hostname}: {e}")
@@ -3498,6 +3514,7 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
     """
     import json  # Import json at the top of the function
     artifacts_data = []
+    print(f"🚀🚀🚀 EXTRACT_REGISTER_FROM_OUTPUT CALLED! Execution: {execution_id}, Hosts: {len(hosts)}")
     print(f"Starting artifact extraction for {len(hosts)} hosts")
     
     # Create comprehensive hostname list for matching  
@@ -3569,12 +3586,75 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
         print(f"🔍 First host attributes: {dir(hosts[0]) if hasattr(hosts[0], '__dict__') else 'No attributes'}")
     
     current_task = None
+
+    # Helper: robustly accumulate a JSON block across multiple lines,
+    # counting braces while ignoring braces inside quoted strings
+    def accumulate_json_block(initial_text: str, start_index: int) -> str:
+        text = initial_text.strip()
+        depth = 0
+        in_string = False
+        escape = False
+
+        # Process a chunk to update depth and string state
+        def process_chunk(chunk: str):
+            nonlocal depth, in_string, escape
+            for ch in chunk:
+                if escape:
+                    escape = False
+                    continue
+                if ch == '\\' and in_string:
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = not in_string
+                    continue
+                if not in_string:
+                    if ch == '{':
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+
+        # Initialize with the initial text
+        process_chunk(text)
+
+        # If the initial text does not start a JSON object, bail out
+        if '{' not in text:
+            return text
+
+        # Keep appending following lines until depth returns to 0
+        j = 1
+        max_lookahead = 50
+        while depth > 0 and j <= max_lookahead and (start_index + j) < len(output_lines):
+            next_line = output_lines[start_index + j].strip()
+            # Skip empty separators
+            if not next_line:
+                j += 1
+                continue
+            # Stop if we clearly hit a new task/host result line
+            lower = next_line.lower()
+            if (next_line.startswith('TASK [') or
+                any(token in lower for token in ['ok: [', 'changed: [', 'failed: [', 'fatal: [', 'skipped: [', 'unreachable: ['])):
+                break
+
+            text += '\n' + next_line
+            process_chunk(next_line)
+            if depth <= 0:
+                break
+            j += 1
+
+        return text
     
     for i, line in enumerate(output_lines):
         try:
             # Debug: Print first few lines and any lines with potential host results
             if i < 10:
                 print(f"🔍 Line {i}: {line[:80]}...")
+            
+            # Special debug for line 68 where Update system packages should be
+            if i == 68:
+                print(f"🔎 SPECIAL DEBUG Line 68: {repr(line)}")
+                print(f"🔎 TASK [ in line: {'TASK [' in line}")
+                print(f"🔎 ] ** in line: {'] **' in line}")
             
             # Debug: Show lines that might contain host results
             if any(pattern in line.lower() for pattern in ["ok:", "changed:", "failed:", "fatal:", "skipped:", "unreachable:"]):
@@ -3587,6 +3667,8 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                 if task_end != -1:
                     current_task = line[task_start:task_end].strip()
                     print(f"📋 Found task: {current_task}")
+            elif "TASK [" in line:
+                print(f"🔍 DEBUG: Found TASK line but doesn't match pattern: {line[:100]}...")
             
             # Look for host task results - improved pattern matching
             found_match = False
@@ -3615,12 +3697,18 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                     
                     print(f"🔍 Found {current_task_status} result for {hostname}: {line[:100]}...")  # Debug: show matching lines
                     
-                    # Check if this line has JSON output (same line)
+                    # Check if this line has JSON output (same line or starts multi-line)
                     if "=> {" in line and current_task:
                         try:
                             json_start = line.find("=> {") + 3
                             json_content = line[json_start:].strip()
-                            print(f"🔍 DEBUG: Extracted JSON content (first 200 chars): {json_content[:200]}")
+                            print(f"🔍 DEBUG: Initial JSON content: '{json_content}'")
+                            # Use robust accumulator that ignores braces inside strings
+                            if json_content.startswith('{'):
+                                json_content = accumulate_json_block(json_content, i)
+                                print(f"🔍 DEBUG: Accumulated JSON (first 300): {json_content[:300]}...")
+                            else:
+                                print(f"🔍 DEBUG: Unexpected JSON start, keeping as-is: {json_content[:120]}...")
                             
                             # Try to parse the JSON - now handle all statuses including fatal/unreachable
                             register_data = json.loads(json_content)
@@ -3651,8 +3739,17 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                 # Extract commonly useful fields
                                 for field in ['msg', 'stdout', 'stderr', 'rc', 'changed', 'failed', 'skipped', 'unreachable']:
                                     if field in register_data:
-                                        useful_data[field] = register_data[field]
-                                        print(f"🔍 DEBUG: Found useful field '{field}': {register_data[field]}")
+                                        field_value = register_data[field]
+                                        # Ensure the field value is JSON-serializable
+                                        try:
+                                            # Test if we can serialize this field
+                                            json.dumps(field_value)
+                                            useful_data[field] = field_value
+                                            print(f"🔍 DEBUG: Found useful field '{field}': {str(field_value)[:100]}...")
+                                        except (TypeError, ValueError) as e:
+                                            # If field is not serializable, convert to string
+                                            useful_data[field] = str(field_value)
+                                            print(f"🔍 DEBUG: Converted non-serializable field '{field}' to string: {str(field_value)[:100]}...")
                                 
                                 # Add error-related fields
                                 for field in ['failed_reason', 'reason', 'exception']:
@@ -3694,16 +3791,31 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                             useful_data['host_name'] = original_hostname
                             useful_data['task_status'] = current_task_status
                             
+                            # Debug the artifact data before JSON serialization
+                            print(f"🔍 DEBUG: Creating artifact for {current_task} on {original_hostname}")
+                            print(f"🔍 DEBUG: useful_data keys: {list(useful_data.keys()) if isinstance(useful_data, dict) else 'Not a dict'}")
+                            print(f"🔍 DEBUG: useful_data sample: {str(useful_data)[:200]}...")
+                            
+                            try:
+                                serialized_data = json.dumps(useful_data, indent=2)
+                                print(f"🔍 DEBUG: JSON serialization successful, length: {len(serialized_data)}")
+                                print(f"🔍 DEBUG: JSON preview (first 200 chars): {serialized_data[:200]}...")
+                            except Exception as json_error:
+                                print(f"❌ DEBUG: JSON serialization failed: {json_error}")
+                                # Fallback to string representation
+                                serialized_data = json.dumps({'error': 'JSON serialization failed', 'raw_data': str(useful_data)}, indent=2)
+                            
                             artifact_data = {
                                 'execution_id': execution_id,
                                 'task_name': current_task,
                                 'register_name': register_name,
-                                'register_data': json.dumps(useful_data, indent=2),
+                                'register_data': serialized_data,
                                 'host_name': original_hostname,
                                 'task_status': current_task_status
                             }
                             artifacts_data.append(artifact_data)
-                            print(f"✅ Created artifact with raw data: {register_name} for {original_hostname}")
+                            print(f"🔥 ARTIFACT PATH 1 (main JSON parsing): {register_name} for {original_hostname}")
+                            print(f"✅ Created artifact with data length {len(serialized_data)}: {register_name} for {original_hostname}")
                             
                         except Exception as e:
                             print(f"⚠️  Failed to parse JSON for {hostname}: {e}")
@@ -3722,36 +3834,8 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                             # Look for JSON content - handle both single line and multi-line JSON
                             if next_line.strip().startswith("{"):
                                 try:
-                                    # Collect multi-line JSON
-                                    json_lines = [next_line]
-                                    brace_count = next_line.count('{') - next_line.count('}')
-                                    
-                                    # If JSON is complete on one line
-                                    if brace_count == 0 and next_line.strip().endswith("}"):
-                                        json_content = next_line
-                                    else:
-                                        # Collect additional lines until JSON is complete
-                                        for json_line_idx in range(idx + 2, min(len(output_lines), idx + 20)):  # Look ahead max 20 lines
-                                            if json_line_idx >= len(output_lines):
-                                                break
-                                            json_line = output_lines[json_line_idx].strip()
-                                            if not json_line:
-                                                continue
-                                            
-                                            json_lines.append(json_line)
-                                            brace_count += json_line.count('{') - json_line.count('}')
-                                            
-                                            # Stop when JSON is complete
-                                            if brace_count == 0:
-                                                break
-                                            
-                                            # Stop if we hit another task or host result
-                                            if ("TASK [" in json_line or 
-                                                any(f"ok: [{h}]" in json_line or f"changed: [{h}]" in json_line or f"failed: [{h}]" in json_line for h in hostnames)):
-                                                break
-                                        
-                                        json_content = '\n'.join(json_lines)
-                                    
+                                    # Collect multi-line JSON using robust accumulator
+                                    json_content = accumulate_json_block(next_line, i + 1)
                                     print(f"🔍 DEBUG: Multi-line JSON content: {json_content[:300]}...")
                                     register_data = json.loads(json_content)
                                     
@@ -3832,6 +3916,7 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                         'task_status': current_task_status
                                     }
                                     artifacts_data.append(artifact_data)
+                                    print(f"🔥 ARTIFACT PATH 2 (multi-line JSON): {register_name} for {original_hostname}")
                                     print(f"✅ Created multi-line artifact with raw data: {register_name} for {original_hostname}")
                                     break
                                     
@@ -3882,7 +3967,19 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                 parts = line.split("=> ", 1)
                                 if len(parts) > 1:
                                     content = parts[1].strip()
-                                    extracted_msg = content
+                                    # If this looks like the start of JSON, try to parse it properly
+                                    if content.startswith('{'):
+                                        try:
+                                            json_content = accumulate_json_block(content, i)
+                                            parsed = json.loads(json_content)
+                                            # Use parsed JSON to build richer data instead of a raw "{" message
+                                            basic_data.update(parsed if isinstance(parsed, dict) else {'raw_output': parsed})
+                                            extracted_msg = None  # We already populated basic_data
+                                        except Exception:
+                                            # Fallback to raw content if not valid JSON
+                                            extracted_msg = content
+                                    else:
+                                        extracted_msg = content
                                     
                                     # Clean up common ansible formatting for non-JSON content
                                     if extracted_msg.startswith('"') and extracted_msg.endswith('"'):
@@ -3975,6 +4072,7 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                 'task_status': current_task_status
                             }
                             artifacts_data.append(artifact_data)
+                            print(f"🔥 ARTIFACT PATH 3 (enhanced extraction): {register_name} for {original_hostname}")
                             print(f"✅ Created enhanced artifact with extracted message: {register_name} for {original_hostname}")
                             if extracted_msg:
                                 print(f"   📝 Extracted message: {extracted_msg[:100]}...")
@@ -4026,6 +4124,7 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                 'task_status': 'unreachable'
                             }
                             artifacts_data.append(artifact_data)
+                            print(f"🔥 ARTIFACT PATH 4 (unreachable host): {register_name} for {original_hostname}")
                             print(f"✅ Created unreachable host artifact: {register_name} for {original_hostname}")
         
         except Exception as e:
@@ -4245,6 +4344,7 @@ def analyze_ansible_output(output, hosts, variables=None):
     return result_data
 
 def run_ansible_playbook_multi_host_safe(task_id, playbook_data, host_data, username, password, variables=None):
+    print("🟡🟡🟡 SAFE WRAPPER FUNCTION CALLED 🟡🟡🟡")
     """
     Safe wrapper that recreates objects from data to avoid session issues.
     """
@@ -4285,6 +4385,11 @@ def run_ansible_playbook_multi_host_safe(task_id, playbook_data, host_data, user
     return run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password, variables)
 
 def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password, variables=None):
+    import sys
+    sys.stdout.flush()
+    print(f"🎯🎯🎯 MANUAL UI EXECUTION FUNCTION CALLED: {task_id} 🎯🎯🎯", flush=True)
+    import logging
+    logging.warning(f"🎯🎯🎯 MANUAL UI EXECUTION FUNCTION CALLED: {task_id} 🎯🎯🎯")
     print(f"🔍 DEBUG: run_ansible_playbook_multi_host called")
     print(f"🔍 DEBUG: task_id={task_id}, hosts={hosts}, len(hosts)={len(hosts) if hosts else 'None'}")
     print(f"🔍 DEBUG: variables={variables}")
@@ -4841,8 +4946,9 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                 print(f"Task {task_id} finished with status '{overall_status}'. Creating execution history.")
                 task = Task.query.get(task_id) # Re-fetch task to get updated info
 
-                # Create history record
+                # Create or fetch history record
                 existing_history = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
+                history = existing_history
 
                 if not existing_history:
                     history = ExecutionHistory(
@@ -4860,7 +4966,42 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                     )
                     db.session.add(history)
                     db.session.commit()
-                
+
+                # Extract artifacts from the output for this manual execution path
+                try:
+                    print(f"🔍 MAIN EXEC ARTIFACT CHECK: History {history.id}, full_output length: {len(full_output) if full_output else 'None/Empty'}")
+                    if full_output:
+                        print(f"🚀🚀🚀 MAIN EXECUTION ARTIFACT EXTRACTION! History: {history.id}")
+                        print(f"🔍 Extracting artifacts from main execution output for history {history.id}")
+                        output_lines_for_artifacts = full_output.split('\n')
+                        print(f"📄 Total output lines for artifact extraction: {len(output_lines_for_artifacts)}")
+
+                        extracted_artifacts_data = extract_register_from_output(output_lines_for_artifacts, history.id, hosts, variables)
+
+                        artifacts_created = []
+                        for artifact_data in extracted_artifacts_data:
+                            artifact = Artifact(
+                                execution_id=artifact_data['execution_id'],
+                                task_name=artifact_data['task_name'],
+                                register_name=artifact_data['register_name'],
+                                register_data=artifact_data['register_data'],
+                                host_name=artifact_data['host_name'],
+                                task_status=artifact_data['task_status']
+                            )
+                            db.session.add(artifact)
+                            artifacts_created.append(artifact)
+
+                        if artifacts_created:
+                            db.session.commit()
+                            print(f"✅ Saved {len(artifacts_created)} artifacts for execution {history.id}")
+                        else:
+                            print(f"⚠️  No artifacts found in output for execution {history.id}")
+                except Exception as artifact_error:
+                    print(f"❌ Error extracting artifacts: {artifact_error}")
+                    import traceback
+                    traceback.print_exc()
+                    db.session.rollback()
+
                 # Emit final status update
                 socketio.emit('task_update', {
                     'task_id': str(task_id),
@@ -4902,123 +5043,13 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
             'message': f'Execution error: {str(e)}'
         })
     
-    # REMOVED: Duplicate history creation - history is already created in the atomic update section above
-    return  # Exit here to prevent duplicate history creation
-    
-    with app.app_context():
-        try:
-            import json
-            # Re-query hosts to ensure they're bound to the current session
-            if hosts:
-                print(f"🔍 DEBUG: Using UI hosts path")
-                host_ids = [host.id for host in hosts]
-                fresh_hosts = Host.query.filter(Host.id.in_(host_ids)).all()
-                host_list_json = json.dumps([host.to_dict() for host in fresh_hosts])
-                primary_host_id = fresh_hosts[0].id if fresh_hosts else None
-            else:
-                print(f"🔍 DEBUG: Using dynamic IPs path (no hosts selected)")
-                # For dynamic execution without specific hosts
-                host_ids = []
-                fresh_hosts = []
-                host_list_json = json.dumps([])
-                primary_host_id = None
-
-            # Get task info for history creation
-            task = Task.query.get(task_id)
-            if task:
-                # Check if history already exists (e.g., from task termination)
-                existing_history = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
-                
-                if existing_history:
-                    print(f"⚠️ History already exists for task {task_id} (ID: {existing_history.id}, status: {existing_history.status}), skipping creation")
-                    history = existing_history
-                else:
-                    print(f"Creating execution history for task {task_id}")
-                    print(f"Playbook ID: {playbook.id}, Host IDs: {host_ids}")
-                    print(f"Username: {username}, Status: {overall_status}")
-                    
-                    # Get the task's original serial ID to preserve it
-                    original_serial_id = task.get_global_serial_id()
-                    print(f"🔍 DEBUG: Multi-host task {task_id} original_serial_id = {original_serial_id}")
-                    
-                    history = ExecutionHistory(
-                        playbook_id=playbook.id,
-                        host_id=primary_host_id,  # Use primary host for record (can be None for dynamic executions)
-                        user_id=task.user_id,  # Store the actual user who initiated the task
-                        status=overall_status,
-                        started_at=task_started_at,
-                        finished_at=task_finished_at,
-                        output=full_output + status_details,
-                        error_output='\n'.join(error_lines) if error_lines else None,
-                        username=username,  # Keep SSH username for backward compatibility
-                        host_list=host_list_json,
-                        webhook_id=None,
-                        original_task_serial_id=original_serial_id  # Preserve the task's original ID
-                    )
-                    
-                    print(f"📋 Creating ExecutionHistory record:")
-                    print(f"   Playbook ID: {playbook.id}")
-                    print(f"   Host ID: {primary_host_id} ({'UI Host' if primary_host_id else 'Dynamic IPs'})")
-                    print(f"   Status: {overall_status}")
-                    print(f"   Host List JSON: {host_list_json}")
-                    
-                    db.session.add(history)
-                    db.session.commit()
-                    print(f"✅ Successfully created execution history with ID: {history.id}")
-                
-                # Extract artifacts from the output
-                if full_output:
-                    try:
-                        print(f"🔍 Extracting artifacts from main execution output for history {history.id}")
-                        output_lines_for_artifacts = full_output.split('\n')
-                        print(f"📄 Total output lines for artifact extraction: {len(output_lines_for_artifacts)}")
-                        
-                        # Use the existing artifact extraction function
-                        extracted_artifacts_data = extract_register_from_output(output_lines_for_artifacts, history.id, hosts, variables)
-                        
-                        # Create and save all artifacts within app context
-                        artifacts_created = []
-                        for artifact_data in extracted_artifacts_data:
-                            artifact = Artifact(
-                                execution_id=artifact_data['execution_id'],
-                                task_name=artifact_data['task_name'],
-                                register_name=artifact_data['register_name'],
-                                register_data=artifact_data['register_data'],
-                                host_name=artifact_data['host_name'],
-                                task_status=artifact_data['task_status']
-                            )
-                            db.session.add(artifact)
-                            artifacts_created.append(artifact)
-                        
-                        if artifacts_created:
-                            db.session.commit()
-                            print(f"✅ Saved {len(artifacts_created)} artifacts for execution {history.id}")
-                        else:
-                            print(f"⚠️  No artifacts found in output for execution {history.id}")
-                        
-                    except Exception as artifact_error:
-                        print(f"❌ Error extracting artifacts: {artifact_error}")
-                        import traceback
-                        traceback.print_exc()
-                        db.session.rollback()
-                
-                # Verify the record was saved
-                saved_history = ExecutionHistory.query.get(history.id)
-                if saved_history:
-                    print(f"🔍 Verification: ExecutionHistory record exists in database")
-                    print(f"   ID: {saved_history.id}")
-                    print(f"   Status: {saved_history.status}")
-                    print(f"   Host ID: {saved_history.host_id}")
-                else:
-                    print(f"❌ ERROR: ExecutionHistory record NOT found in database!")
-                    
-        except Exception as history_error:
-            print(f"Error creating execution history: {history_error}")
-            import traceback
-            traceback.print_exc()
-            db.session.rollback()
+    # History and artifacts are already handled above; exit to finish function
+    return
 
 def run_ansible_playbook(task_id, playbook, host, username, password, variables=None):
+    import logging
+    logging.warning("⚪⚪⚪ SINGLE-HOST EXECUTION FUNCTION CALLED ⚪⚪⚪")
+    print("⚪⚪⚪ SINGLE-HOST EXECUTION FUNCTION CALLED ⚪⚪⚪", flush=True)
     print(f"Starting playbook execution for task {task_id}")
     
     with app.app_context():

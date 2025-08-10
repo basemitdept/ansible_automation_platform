@@ -5,3 +5,4 @@
   tasks:
     - name: Update system packages
       command: echo "{{uu}}"
+      register: ggg

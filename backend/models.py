@@ -336,6 +336,17 @@ class Artifact(db.Model):
     
     execution = db.relationship('ExecutionHistory', backref='artifacts')
     
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        print(f"🎯 ARTIFACT CREATED: {kwargs.get('task_name', 'Unknown')} for {kwargs.get('host_name', 'Unknown')}")
+        register_data = kwargs.get('register_data', '')
+        if 'msg' in register_data and '"msg": "{"' in register_data:
+            print(f"⚠️  DETECTED PROBLEMATIC ARTIFACT WITH msg='{{': {kwargs.get('task_name', 'Unknown')}")
+            print(f"⚠️  Register data preview: {register_data[:200]}...")
+            import traceback
+            print(f"⚠️  Creation stack trace:")
+            traceback.print_stack()
+    
     def to_dict(self):
         import json
         try:
