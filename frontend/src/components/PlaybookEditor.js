@@ -757,11 +757,7 @@ const PlaybookEditor = ({ currentUser }) => {
           >
             <span style={{ marginRight: '8px' }}>📄</span>
             <span>{selectedPlaybook ? `${selectedPlaybook.name}.yml` : 'playbook.yml'}</span>
-            <div style={{ marginLeft: 'auto', marginRight: '12px', display: 'flex', gap: '4px' }}>
-              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#ff5f57' }}></div>
-              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#ffbd2e' }}></div>
-              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#28ca42' }}></div>
-            </div>
+            {/* Removed macOS-style window control dots */}
           </div>
           <Editor
             height="calc(100% - 32px)"
