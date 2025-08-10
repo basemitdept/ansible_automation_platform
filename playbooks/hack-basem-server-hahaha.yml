@@ -1,7 +1,0 @@
-    - name: Show whoami on target server
-      command: whoami
-      register: whoami_result
-
-    - name: Print whoami result
-      debug:
-        msg: "User on target: {{ whoami_result.stdout }}"

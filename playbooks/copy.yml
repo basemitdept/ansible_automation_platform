@@ -1,9 +1,0 @@
----
-- name: Sample Linux playbook
-  hosts: all
-  become: yes
-  tasks:
-    - name: Update system packages
-      copy:
-        src: epel-release-latest-8.noarch.rpm
-        dest: /tmp

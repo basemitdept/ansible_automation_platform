@@ -1,7 +1,0 @@
----
-- name: Sample Linux playbook
-  hosts: "{{ ips }}"
-  become: true
-  tasks:
-    - name: Update system packages
-      command: hostname

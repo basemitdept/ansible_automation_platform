@@ -1,5 +1,0 @@
-- name: ggg
-  hosts: all
-  tasks:
-  - name: alaraj-alarajlekfhjlkwajehflkwhjef
-    command: echo basemalaraj
