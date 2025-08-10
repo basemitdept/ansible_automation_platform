@@ -2254,7 +2254,28 @@ def trigger_webhook(webhook_token):
     if not playbook:
         return jsonify({'error': 'Playbook not found'}), 404
     
-    # Get hosts - priority: 1) from request payload, 2) from webhook config
+    # Merge default variables with request variables EARLY so host selection can honor variable-defined targets
+    variables = {}
+    if webhook.default_variables:
+        try:
+            variables.update(json.loads(webhook.default_variables))
+        except Exception:
+            pass
+    if 'variables' in data and isinstance(data['variables'], dict):
+        variables.update(data['variables'])
+
+    # Identify dynamic targets provided via variables (e.g., 'ips' or 'hosts' comma-separated)
+    dynamic_targets = []
+    try:
+        var_hosts_value = variables.get('ips') or variables.get('hosts')
+        if isinstance(var_hosts_value, str):
+            for token in [t.strip() for t in var_hosts_value.split(',') if t.strip()]:
+                if token.lower() not in ['all', 'targets']:
+                    dynamic_targets.append(token)
+    except Exception:
+        pass
+
+    # Get hosts - priority: 1) from request payload, 2) from webhook config, 3) from variables, 4) fallback localhost
     hosts = []
     host_objects = []
     
@@ -2291,9 +2312,13 @@ def trigger_webhook(webhook_token):
         except:
             return jsonify({'error': 'Invalid host configuration'}), 500
     
-    # Priority 3: No hosts provided anywhere - this is now allowed for playbooks that don't need specific hosts
+    # Priority 3: If variables specify dynamic targets, don't inject localhost; let executor build inventory from variables
+    elif len(dynamic_targets) > 0:
+        # Leave host_objects empty; downstream executor will add dynamic IPs from variables
+        host_objects = []
+    
+    # Priority 4: Fallback localhost only when no explicit hosts anywhere
     else:
-        # Create a minimal host entry for playbooks that run locally or don't need specific hosts
         host_objects = [{
             'id': 'localhost',
             'name': 'localhost',
@@ -2302,17 +2327,7 @@ def trigger_webhook(webhook_token):
             'os_type': 'linux'
         }]
     
-    # Merge default variables with request variables
-    variables = {}
-    if webhook.default_variables:
-        try:
-            variables.update(json.loads(webhook.default_variables))
-        except:
-            pass
-    
-    # Override with variables from request
-    if 'variables' in data:
-        variables.update(data['variables'])
+    # variables already merged above
     
     # Get SSH username - use from request, webhook default, or system default
     username = None
@@ -2509,7 +2524,8 @@ def analyze_ansible_output_for_partial_success(output_text, hosts):
         failed_count: number of hosts that failed
         host_results: dict mapping hostnames to their status
     """
-    if not output_text or not hosts:
+    # Allow analysis even when hosts list is empty (e.g., dynamic variable targets)
+    if not output_text:
         return 'failed', 0, 0, {}
     
     host_results = {}
@@ -2700,10 +2716,9 @@ def analyze_variable_hosts_output(output_text, hosts):
     elif success_count > 0 and failed_count > 0:
         overall_status = 'partial'
     else:
-        # All unknown - try to infer from overall context
-        if 'failed' in output_text.lower() and 'success' in output_text.lower():
-            overall_status = 'partial'
-        elif 'error' in output_text.lower() or 'failed' in output_text.lower():
+        # All unknown - infer conservatively without declaring partial
+        text_lower = output_text.lower()
+        if ('error' in text_lower) or ('failed' in text_lower) or ('fatal' in text_lower) or ('unreachable' in text_lower):
             overall_status = 'failed'
         else:
             overall_status = 'completed'
@@ -4875,27 +4890,28 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
         print(f"  Original hosts: {len(hosts)}")
         print(f"  Total hosts in results: {total_hosts_in_results}")
         
-        # Calculate overall status based on actual results, not just original host count
+        # Calculate overall status aligned with UI rule: partial only when both success and failure exist
         if total_hosts_in_results == 0:
-            # No hosts were processed - this is a failure
             overall_status = 'failed'
             print(f"Overall status: FAILED (no hosts processed)")
-        elif len(failed_hosts) == total_hosts_in_results:
-            # All processed hosts failed
-            overall_status = 'failed'
-            print(f"Overall status: FAILED (all {total_hosts_in_results} processed hosts failed)")
         elif len(successful_hosts) == total_hosts_in_results:
-            # All processed hosts succeeded completely
             overall_status = 'completed'
             print(f"Overall status: COMPLETED (all {total_hosts_in_results} processed hosts succeeded)")
-        elif len(successful_hosts) > 0 and len(failed_hosts) == 0:
-            # Some succeeded, some partial, but none completely failed
-            overall_status = 'completed'
-            print(f"Overall status: COMPLETED ({len(successful_hosts)} success, {len(partial_hosts)} partial - no complete failures)")
-        else:
-            # Mixed results: some hosts failed, some succeeded, or some had partial task failures
+        elif len(failed_hosts) == total_hosts_in_results or (len(successful_hosts) == 0 and (len(failed_hosts) + len(partial_hosts) == total_hosts_in_results)):
+            # All are failed or partial with no successes → treat as failed
+            overall_status = 'failed'
+            print(f"Overall status: FAILED ({len(failed_hosts)} failed, {len(partial_hosts)} partial, 0 success)")
+        elif len(successful_hosts) > 0 and len(failed_hosts) > 0:
             overall_status = 'partial'
-            print(f"Overall status: PARTIAL (mixed results: {len(successful_hosts)} success, {len(partial_hosts)} partial, {len(failed_hosts)} failed)")
+            print(f"Overall status: PARTIAL (success + failure present)")
+        elif len(successful_hosts) > 0 and len(failed_hosts) == 0:
+            # Success with only partials present counts as completed (no outright failed hosts)
+            overall_status = 'completed'
+            print(f"Overall status: COMPLETED ({len(successful_hosts)} success, {len(partial_hosts)} partial, 0 failed)")
+        else:
+            # Conservative fallback
+            overall_status = 'failed'
+            print(f"Overall status: FAILED (conservative fallback)")
         
         # Create detailed status message
         status_details = f"\n{'='*50}\nEXECUTION SUMMARY\n{'='*50}\n"
