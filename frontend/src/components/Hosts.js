@@ -52,6 +52,8 @@ const Hosts = ({ currentUser }) => {
   const [form] = Form.useForm();
   const [bulkForm] = Form.useForm();
   const [groupForm] = Form.useForm();
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
 
   useEffect(() => {
     fetchHosts();
@@ -110,7 +112,19 @@ const Hosts = ({ currentUser }) => {
     
     // Filter by selected group
     if (selectedGroup) {
-      filtered = filtered.filter(host => host.group_id === selectedGroup);
+      filtered = filtered.filter(host => {
+        // Check if host belongs to selected group via single group_id OR multiple groups
+        if (host.group_id === selectedGroup) {
+          return true;
+        }
+        
+        // Check if host belongs to selected group via groups array
+        if (host.groups && host.groups.length > 0) {
+          return host.groups.some(group => group.id === selectedGroup);
+        }
+        
+        return false;
+      });
     }
     
     // Keep sort order (newest first) after filtering
@@ -184,6 +198,34 @@ const Hosts = ({ currentUser }) => {
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('Please select hosts to delete');
+      return;
+    }
+
+    setBulkDeleteLoading(true);
+    try {
+      const response = await hostsAPI.bulkDelete(selectedRowKeys);
+      
+      if (response.status === 207) {
+        // Multi-status response - some succeeded, some failed
+        message.warning(`${response.data.message}. Check the console for errors.`);
+        console.warn('Bulk delete errors:', response.data.errors);
+      } else {
+        message.success(response.data.message);
+      }
+      
+      setSelectedRowKeys([]);
+      fetchHosts();
+    } catch (error) {
+      message.error('Failed to delete selected hosts');
+      console.error('Bulk delete error:', error);
+    } finally {
+      setBulkDeleteLoading(false);
+    }
+  };
+
   const handleSubmit = async (values) => {
     try {
       console.log('=== HOST SUBMISSION DEBUG ===');
@@ -222,24 +264,37 @@ const Hosts = ({ currentUser }) => {
       const response = await hostsAPI.createBulk({
         ips,
         group_id: values.group_id,
-        description: values.description || ''
+        description: values.description || '',
+        allow_duplicates: true  // Allow creating/updating existing hosts
       });
 
-      const { total_created, total_errors, errors } = response.data;
+      const { total_created, total_updated, total_errors, errors, message: responseMessage } = response.data;
       
-      if (total_created > 0) {
-        message.success(`Successfully created ${total_created} hosts`);
+      // Show comprehensive success message
+      if (total_created > 0 || total_updated > 0) {
+        let successMsg = '';
+        if (total_created > 0) {
+          successMsg += `${total_created} host(s) created`;
+        }
+        if (total_updated > 0) {
+          if (successMsg) successMsg += ', ';
+          successMsg += `${total_updated} host(s) updated (added to group)`;
+        }
+        message.success(successMsg);
       }
       
+      // Only show errors if there are actual errors (not skipped hosts)
       if (total_errors > 0) {
-        message.warning(`${total_errors} hosts could not be created. Check console for details.`);
-        console.log('Bulk creation errors:', errors);
+        message.error(`${total_errors} host(s) had errors. Check console for details.`);
+        console.error('Bulk creation errors:', errors);
       }
 
       setBulkModalVisible(false);
+      bulkForm.resetFields();
       fetchHosts();
     } catch (error) {
       message.error('Failed to create hosts in bulk');
+      console.error('Bulk creation error:', error);
     }
   };
 
@@ -305,17 +360,32 @@ const Hosts = ({ currentUser }) => {
       width: 120,
     },
     {
-      title: 'Group',
-      dataIndex: 'group',
-      key: 'group',
-      render: (group) => group ? (
-        <Tag color={group.color} icon={<GroupOutlined />}>
-          {group.name}
-        </Tag>
-      ) : (
-        <Tag color="default">No Group</Tag>
-      ),
-      width: 150,
+      title: 'Groups',
+      key: 'groups',
+      render: (_, record) => {
+        // Get groups from record.groups (multiple groups) or fallback to record.group (single group)
+        const groupsToShow = record.groups && record.groups.length > 0 ? record.groups : (record.group ? [record.group] : []);
+        
+        if (groupsToShow.length === 0) {
+          return <Tag color="default">No Group</Tag>;
+        }
+        
+        return (
+          <div>
+            {groupsToShow.map((group, index) => (
+              <Tag 
+                key={group.id || index} 
+                color={group.color} 
+                icon={<GroupOutlined />}
+                style={{ marginBottom: 4 }}
+              >
+                {group.name}
+              </Tag>
+            ))}
+          </div>
+        );
+      },
+      width: 200,
     },
     {
       title: 'Description',
@@ -433,6 +503,23 @@ const Hosts = ({ currentUser }) => {
                     </Button>
                   </>
                 )}
+                {hasPermission(currentUser, 'delete_host') && selectedRowKeys.length > 0 && (
+                  <Popconfirm
+                    title={`Delete ${selectedRowKeys.length} selected host(s)?`}
+                    description="This action cannot be undone."
+                    onConfirm={handleBulkDelete}
+                    okText="Yes"
+                    cancelText="No"
+                  >
+                    <Button
+                      danger
+                      icon={<DeleteOutlined />}
+                      loading={bulkDeleteLoading}
+                    >
+                      Delete Selected ({selectedRowKeys.length})
+                    </Button>
+                  </Popconfirm>
+                )}
               </Space>
             </Col>
           </Row>
@@ -441,6 +528,13 @@ const Hosts = ({ currentUser }) => {
             dataSource={filteredHosts}
             rowKey="id"
             loading={loading}
+            rowSelection={{
+              selectedRowKeys,
+              onChange: setSelectedRowKeys,
+              getCheckboxProps: (record) => ({
+                disabled: !hasPermission(currentUser, 'delete_host'),
+              }),
+            }}
             pagination={{
               pageSize: 10,
               showSizeChanger: true,

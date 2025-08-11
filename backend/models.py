@@ -50,6 +50,7 @@ class Playbook(db.Model):
     content = db.Column(db.Text, nullable=False)
     description = db.Column(db.Text)
     variables = db.Column(db.Text)  # JSON string storing variable definitions
+    assigned_variables = db.Column(db.Text)  # JSON array of variable IDs assigned to this playbook
     os_type = db.Column(db.String(50), nullable=False, default='linux')  # OS type column
     # Git import metadata
     git_repo_url = db.Column(db.String(500))  # Git repository URL
@@ -71,12 +72,21 @@ class Playbook(db.Model):
             except:
                 variables_data = []
         
+        # Parse assigned variables if they exist
+        assigned_variables_data = []
+        if self.assigned_variables:
+            try:
+                assigned_variables_data = json.loads(self.assigned_variables)
+            except:
+                assigned_variables_data = []
+        
         return {
             'id': str(self.id),
             'name': self.name,
             'content': self.content,
             'description': self.description,
             'variables': variables_data,
+            'assigned_variables': assigned_variables_data,
             'os_type': self.os_type,
             'creation_method': self.creation_method or 'manual',
             'git_repo_url': self.git_repo_url,
@@ -100,9 +110,43 @@ class HostGroup(db.Model):
     
     def to_dict(self):
         try:
+            import json
+            
+            # Count hosts that have this group in their group_ids JSON array OR single group_id
             host_count = 0
-            if hasattr(self, 'hosts') and self.hosts:
-                host_count = len(self.hosts)
+            
+            # Count hosts with single group_id (old way)
+            hosts_with_single_group = Host.query.filter_by(group_id=str(self.id)).count()
+            
+            # Count hosts with this group in their group_ids array (new way)
+            hosts_with_multiple_groups = 0
+            all_hosts = Host.query.filter(Host.group_ids.isnot(None)).all()
+            
+            for host in all_hosts:
+                if host.group_ids:
+                    try:
+                        group_ids = json.loads(host.group_ids)
+                        if str(self.id) in group_ids:
+                            hosts_with_multiple_groups += 1
+                    except:
+                        continue
+            
+            # Total unique hosts (avoid double counting)
+            host_count = hosts_with_single_group + hosts_with_multiple_groups
+            
+            # Subtract overlap (hosts that have both single group_id AND are in group_ids)
+            overlap_count = 0
+            hosts_with_single = Host.query.filter_by(group_id=str(self.id)).all()
+            for host in hosts_with_single:
+                if host.group_ids:
+                    try:
+                        group_ids = json.loads(host.group_ids)
+                        if str(self.id) in group_ids:
+                            overlap_count += 1
+                    except:
+                        continue
+            
+            host_count = host_count - overlap_count
             
             return {
                 'id': str(self.id),
@@ -134,6 +178,7 @@ class Host(db.Model):
     hostname = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text)
     group_id = db.Column(db.String(36), db.ForeignKey('host_groups.id'), nullable=True)
+    group_ids = db.Column(db.Text, nullable=True)  # JSON array for multiple groups
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -145,6 +190,9 @@ class Host(db.Model):
     
     def to_dict(self):
         try:
+            import json
+            
+            # Handle primary group (backward compatibility)
             group_data = None
             if self.group:
                 try:
@@ -158,15 +206,39 @@ class Host(db.Model):
                     print(f"Error serializing group for host {self.id}: {str(group_error)}")
                     group_data = None
             
+            # Handle multiple groups from group_ids
+            groups_data = []
+            if hasattr(self, 'group_ids') and self.group_ids:
+                try:
+                    group_ids = json.loads(self.group_ids)
+                    for group_id in group_ids:
+                        group = HostGroup.query.get(group_id)
+                        if group:
+                            groups_data.append({
+                                'id': str(group.id),
+                                'name': group.name,
+                                'color': group.color,
+                                'description': group.description
+                            })
+                except Exception as groups_error:
+                    print(f"Error serializing groups for host {self.id}: {str(groups_error)}")
+                    groups_data = []
+            
+            # If no group_ids but has group_id, add primary group to groups list
+            elif self.group_id and group_data:
+                groups_data = [group_data]
+            
             return {
                 'id': str(self.id),
                 'name': self.name,
                 'hostname': self.hostname,
                 'description': self.description,
-                'os_type': self.os_type,
-                'port': self.port,
+                'os_type': getattr(self, 'os_type', 'linux'),
+                'port': getattr(self, 'port', 22),
                 'group_id': str(self.group_id) if self.group_id else None,
-                'group': group_data,
+                'group': group_data,  # Primary group for backward compatibility
+                'groups': groups_data,  # Multiple groups
+                'group_ids': self.group_ids,  # Raw JSON string
                 'created_at': self.created_at.isoformat() + 'Z' if self.created_at else None,
                 'updated_at': self.updated_at.isoformat() + 'Z' if self.updated_at else None
             }
@@ -178,10 +250,12 @@ class Host(db.Model):
                 'name': self.name if hasattr(self, 'name') else 'Unknown',
                 'hostname': self.hostname if hasattr(self, 'hostname') else 'Unknown',
                 'description': self.description if hasattr(self, 'description') else '',
-                'os_type': self.os_type if hasattr(self, 'os_type') else 'linux',
-                'port': self.port if hasattr(self, 'port') else 22,
+                'os_type': getattr(self, 'os_type', 'linux'),
+                'port': getattr(self, 'port', 22),
                 'group_id': None,
                 'group': None,
+                'groups': [],
+                'group_ids': None,
                 'created_at': None,
                 'updated_at': None
             }
@@ -611,6 +685,31 @@ class PlaybookFile(db.Model):
             'description': self.description,
             'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z'
+        }
+
+class Variable(db.Model):
+    __tablename__ = 'variables'
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    key = db.Column(db.String(255), nullable=False, unique=True)  # Variable name/key
+    value = db.Column(db.Text, nullable=False)  # Variable value
+    description = db.Column(db.Text)  # Optional description
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)  # Track who created the variable
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    user = db.relationship('User', backref='variables')  # User who created the variable
+    
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'key': self.key,
+            'value': self.value,
+            'description': self.description,
+            'user_id': str(self.user_id) if self.user_id else None,
+            'created_at': self.created_at.isoformat() + 'Z',
+            'updated_at': self.updated_at.isoformat() + 'Z',
+            'user': self.user.to_dict() if self.user else None
         } 
 
 # Helper: Clean up duplicate ExecutionHistory records before adding unique constraint

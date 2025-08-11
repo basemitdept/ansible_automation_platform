@@ -19,7 +19,8 @@ import {
   Select,
   Radio,
   Row,
-  Col
+  Col,
+  theme
 } from 'antd';
 import {
   PlusOutlined,
@@ -37,7 +38,7 @@ import {
   BranchesOutlined
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
-import { playbooksAPI, playbookFilesAPI, credentialsAPI } from '../services/api';
+import { playbooksAPI, playbookFilesAPI, credentialsAPI, variablesAPI } from '../services/api';
 import { hasPermission } from '../utils/permissions';
 import moment from 'moment';
 
@@ -46,6 +47,7 @@ const { TextArea } = Input;
 const { Dragger } = Upload;
 
 const Playbooks = ({ currentUser }) => {
+  const { token } = theme.useToken();
   const [playbooks, setPlaybooks] = useState([]);
   const [filteredPlaybooks, setFilteredPlaybooks] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -68,6 +70,8 @@ const Playbooks = ({ currentUser }) => {
   const [importedContent, setImportedContent] = useState('');
   const [gitVisibility, setGitVisibility] = useState('public'); // 'public' or 'private'
   const [credentials, setCredentials] = useState([]);
+  const [globalVariables, setGlobalVariables] = useState([]);
+  const [selectedVariables, setSelectedVariables] = useState([]);
   const [gitForm] = Form.useForm();
 
   // VS Code-like editor options
@@ -159,6 +163,7 @@ const Playbooks = ({ currentUser }) => {
   useEffect(() => {
     fetchPlaybooks();
     fetchCredentials();
+    fetchGlobalVariables();
   }, []);
 
   const fetchPlaybooks = async () => {
@@ -184,6 +189,15 @@ const Playbooks = ({ currentUser }) => {
       setCredentials(response.data);
     } catch (error) {
       console.error('Failed to fetch credentials:', error);
+    }
+  };
+
+  const fetchGlobalVariables = async () => {
+    try {
+      const response = await variablesAPI.getAll();
+      setGlobalVariables(response.data);
+    } catch (error) {
+      console.error('Failed to fetch global variables:', error);
     }
   };
 
@@ -302,6 +316,9 @@ const Playbooks = ({ currentUser }) => {
     setEditingPlaybook(playbook);
     setEditorContent(playbook.content || '');
     
+    // Set assigned variables
+    setSelectedVariables(playbook.assigned_variables || []);
+    
     // Set creation method based on how the playbook was originally created
     const method = playbook.creation_method || 'manual';
     console.log('🔥 SETTING CREATION METHOD TO:', method);
@@ -318,6 +335,7 @@ const Playbooks = ({ currentUser }) => {
     form.setFieldsValue({
       ...playbook,
       creation_method: method,
+      assigned_variables: playbook.assigned_variables || [],
       git_visibility: playbook.git_visibility || 'public',
       git_credential_id: playbook.git_credential_id || ''
     });
@@ -547,7 +565,8 @@ const Playbooks = ({ currentUser }) => {
       const submitValues = {
         ...values,
         content: editorContent,
-        creation_method: creationMethod
+        creation_method: creationMethod,
+        assigned_variables: selectedVariables
       };
 
       // Add Git metadata if it's a Git import
@@ -841,12 +860,12 @@ const Playbooks = ({ currentUser }) => {
           setEditingPlaybook(null);
           setCanUploadFiles(false);
           setTempFiles([]);
+          setSelectedVariables([]);
           form.resetFields();
           gitForm.resetFields();
           setEditorContent('');
           setCreationMethod('manual');
           setImportedContent('');
-      setGitVisibility('public');
           setGitVisibility('public');
         }}
         width={1000}
@@ -913,6 +932,43 @@ const Playbooks = ({ currentUser }) => {
             name="description"
           >
             <Input placeholder="Brief description of what this playbook does" />
+          </Form.Item>
+
+          <Form.Item
+            label="Assigned Variables"
+            name="assigned_variables"
+            tooltip="Select which global variables should be available for this playbook. Only assigned variables can be used during execution."
+          >
+            <Select
+              mode="multiple"
+              placeholder="Select variables to assign to this playbook"
+              value={selectedVariables}
+              onChange={setSelectedVariables}
+              showSearch
+              filterOption={(input, option) => {
+                const variable = globalVariables.find(v => v.id === option.value);
+                if (!variable) return false;
+                const searchText = `${variable.key} ${variable.value} ${variable.description || ''}`.toLowerCase();
+                return searchText.indexOf(input.toLowerCase()) >= 0;
+              }}
+              optionLabelProp="label"
+
+            >
+              {globalVariables.map(variable => (
+                <Select.Option 
+                  key={variable.id} 
+                  value={variable.id}
+                  label={`${variable.key} = ${variable.value}`}
+                >
+                  <div>
+                    <div><strong>{variable.key}</strong> = <span style={{ color: token.colorPrimary }}>{variable.value}</span></div>
+                    {variable.description && (
+                      <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>{variable.description}</div>
+                    )}
+                  </div>
+                </Select.Option>
+              ))}
+            </Select>
           </Form.Item>
 
           {/* Git Import Section */}

@@ -3,7 +3,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, verify_jwt_in_request
 from sqlalchemy import text
-from models import db, User, Playbook, Host, HostGroup, Task, ExecutionHistory, Artifact, Credential, Webhook, ApiToken, PlaybookFile
+from models import db, User, Playbook, Host, HostGroup, Task, ExecutionHistory, Artifact, Credential, Webhook, ApiToken, PlaybookFile, Variable
 import os
 import threading
 import subprocess
@@ -498,6 +498,14 @@ def create_playbook():
             except Exception as var_error:
                 print(f"⚠️ Warning: Failed to serialize variables: {var_error}")
         
+        # Handle assigned variables - convert to JSON string if provided
+        assigned_variables_json = None
+        if 'assigned_variables' in data and data['assigned_variables']:
+            try:
+                assigned_variables_json = json.dumps(data['assigned_variables'])
+            except Exception as var_error:
+                print(f"⚠️ Warning: Failed to serialize assigned variables: {var_error}")
+        
         # Create playbook object
         try:
             playbook = Playbook(
@@ -505,6 +513,7 @@ def create_playbook():
                 content=data['content'],
                 description=data.get('description', ''),
                 variables=variables_json,
+                assigned_variables=assigned_variables_json,
                 os_type=data.get('os_type', 'linux'),
                 creation_method=data.get('creation_method', 'manual'),
                 git_repo_url=data.get('git_repo_url'),
@@ -560,10 +569,19 @@ def update_playbook(playbook_id):
     if 'variables' in data and data['variables']:
         variables_json = json.dumps(data['variables'])
     
+    # Handle assigned variables - convert to JSON string if provided
+    assigned_variables_json = playbook.assigned_variables  # Keep existing if not provided
+    if 'assigned_variables' in data:
+        if data['assigned_variables']:
+            assigned_variables_json = json.dumps(data['assigned_variables'])
+        else:
+            assigned_variables_json = None
+    
     playbook.name = data['name']
     playbook.content = data['content']
     playbook.description = data.get('description', '')
     playbook.variables = variables_json
+    playbook.assigned_variables = assigned_variables_json
     playbook.os_type = data.get('os_type', playbook.os_type)
     playbook.updated_at = datetime.utcnow()
     
@@ -1047,68 +1065,12 @@ def get_hosts():
         # Test database connection first
         db.session.execute(text('SELECT 1'))
         
-        # Simple query with basic columns only
-        query = "SELECT id, name, hostname, description, group_id, created_at, updated_at FROM hosts"
-        result_rows = db.session.execute(text(query))
+        # Use the ORM to get hosts with proper to_dict() method that includes groups
+        hosts = Host.query.all()
+        hosts_data = [host.to_dict() for host in hosts]
         
-        hosts = []
-        for row in result_rows:
-            # Parse OS info from description if it exists
-            description = row.description or ''
-            os_type = 'linux'
-            port = 22
-            
-            # Extract OS info from description
-            if 'Windows host (WinRM port' in description:
-                os_type = 'windows'
-                # Try to extract port number
-                import re
-                port_match = re.search(r'port (\d+)', description)
-                if port_match:
-                    port = int(port_match.group(1))
-                else:
-                    port = 5986
-            elif 'Linux host (SSH port' in description:
-                os_type = 'linux'
-                # Try to extract port number  
-                import re
-                port_match = re.search(r'port (\d+)', description)
-                if port_match:
-                    port = int(port_match.group(1))
-                else:
-                    port = 22
-            
-            host_data = {
-                'id': str(row.id),
-                'name': row.name,
-                'hostname': row.hostname,
-                'description': description,
-                'group_id': str(row.group_id) if row.group_id else None,
-                'created_at': row.created_at.isoformat() + 'Z' if row.created_at else None,
-                'updated_at': row.updated_at.isoformat() + 'Z' if row.updated_at else None,
-                'os_type': os_type,
-                'port': port,
-                'group': None
-            }
-            
-            # Get group info if group_id exists
-            if row.group_id:
-                try:
-                    group = HostGroup.query.get(row.group_id)
-                    if group:
-                        host_data['group'] = {
-                            'id': str(group.id),
-                            'name': group.name,
-                            'color': group.color,
-                            'description': group.description
-                        }
-                except Exception as group_error:
-                    print(f"Error fetching group for host {row.id}: {str(group_error)}")
-            
-            hosts.append(host_data)
-        
-        print(f"Successfully fetched {len(hosts)} hosts")
-        return jsonify(hosts)
+        print(f"Successfully fetched {len(hosts_data)} hosts")
+        return jsonify(hosts_data)
         
     except Exception as e:
         print(f"Error fetching hosts: {str(e)}")
@@ -1182,36 +1144,103 @@ def create_hosts_bulk():
     ips = data.get('ips', [])
     group_id = data.get('group_id')
     description = data.get('description', '')
+    allow_duplicates = data.get('allow_duplicates', True)  # Allow creating duplicates with unique names
     
     if not ips:
         return jsonify({'error': 'No IP addresses provided'}), 400
     
     created_hosts = []
+    updated_hosts = []
     errors = []
     
     for i, ip in enumerate(ips):
         try:
-            # Generate a name if not provided
-            name = f"host-{ip.replace('.', '-').replace(':', '-')}"
+            # Generate a base name
+            base_name = f"host-{ip.replace('.', '-').replace(':', '-')}"
             
-            # Check if host with this name or hostname already exists
-            existing_host = Host.query.filter(
-                (Host.name == name) | (Host.hostname == ip)
-            ).first()
-            
-            if existing_host:
-                errors.append(f"Host with IP {ip} or name {name} already exists")
-                continue
-            
-            host = Host(
-                name=name,
-                hostname=ip,
-                description=description,
-                group_id=group_id
-            )
-            
-            db.session.add(host)
-            created_hosts.append(host)
+            if allow_duplicates:
+                # Check if host with this hostname already exists
+                existing_host = Host.query.filter(Host.hostname == ip).first()
+                
+                if existing_host:
+                    # Update the existing host - append description and add to groups
+                    if description:
+                        if existing_host.description:
+                            existing_host.description += f" | {description}"
+                        else:
+                            existing_host.description = description
+                    
+                    # Handle multiple groups - check if host has group_ids column for multiple groups
+                    if group_id:
+                        try:
+                            # Try to get existing group_ids (JSON array)
+                            existing_groups = []
+                            
+                            # Check if the host has a group_ids field (for multiple groups)
+                            if hasattr(existing_host, 'group_ids') and existing_host.group_ids:
+                                try:
+                                    existing_groups = json.loads(existing_host.group_ids)
+                                except Exception as parse_error:
+                                    existing_groups = []
+                            
+                            # If host has single group_id, migrate it to group_ids array
+                            elif existing_host.group_id:
+                                existing_groups = [existing_host.group_id]
+                            
+                            # Add new group if not already present
+                            if group_id not in existing_groups:
+                                existing_groups.append(group_id)
+                            
+                            # Try to save to group_ids field if it exists
+                            if hasattr(existing_host, 'group_ids'):
+                                existing_host.group_ids = json.dumps(existing_groups)
+                            else:
+                                # Fallback to single group_id field
+                                existing_host.group_id = group_id
+                                
+                        except Exception as e:
+                            print(f"❌ Error handling multiple groups: {e}")
+                            # Fallback to single group
+                            existing_host.group_id = group_id
+                    
+                    existing_host.updated_at = datetime.utcnow()
+                    updated_hosts.append(existing_host)
+                else:
+                    # Create new host - find unique name if needed
+                    name = base_name
+                    counter = 1
+                    while Host.query.filter(Host.name == name).first():
+                        name = f"{base_name}-{counter}"
+                        counter += 1
+                    
+                    host = Host(
+                        name=name,
+                        hostname=ip,
+                        description=description,
+                        group_id=group_id
+                    )
+                    
+                    db.session.add(host)
+                    created_hosts.append(host)
+            else:
+                # Original behavior - check for existing and error if found
+                existing_host = Host.query.filter(
+                    (Host.name == base_name) | (Host.hostname == ip)
+                ).first()
+                
+                if existing_host:
+                    errors.append(f"Host with IP {ip} or name {base_name} already exists")
+                    continue
+                
+                host = Host(
+                    name=base_name,
+                    hostname=ip,
+                    description=description,
+                    group_id=group_id
+                )
+                
+                db.session.add(host)
+                created_hosts.append(host)
             
         except Exception as e:
             errors.append(f"Failed to create host for IP {ip}: {str(e)}")
@@ -1220,9 +1249,12 @@ def create_hosts_bulk():
         db.session.commit()
         return jsonify({
             'created_hosts': [host.to_dict() for host in created_hosts],
+            'updated_hosts': [host.to_dict() for host in updated_hosts],
             'errors': errors,
             'total_created': len(created_hosts),
-            'total_errors': len(errors)
+            'total_updated': len(updated_hosts),
+            'total_errors': len(errors),
+            'message': f'Successfully created {len(created_hosts)} host(s), updated {len(updated_hosts)} existing host(s)'
         }), 201
     except Exception as e:
         db.session.rollback()
@@ -1285,6 +1317,77 @@ def delete_host(host_id):
         print(f"Error deleting host: {str(e)}")
         db.session.rollback()
         return jsonify({'error': f'Failed to delete host: {str(e)}'}), 500
+
+@app.route('/api/hosts/bulk-delete', methods=['DELETE'])
+@jwt_required()
+@require_permission('delete_host')
+def bulk_delete_hosts():
+    try:
+        data = request.json
+        host_ids = data.get('host_ids', [])
+        
+        if not host_ids:
+            return jsonify({'error': 'No host IDs provided'}), 400
+        
+        # Get all hosts to be deleted
+        hosts = Host.query.filter(Host.id.in_(host_ids)).all()
+        
+        if not hosts:
+            return jsonify({'error': 'No valid hosts found for deletion'}), 404
+        
+        # Check for active tasks using any of these hosts
+        active_tasks = Task.query.filter(Task.host_id.in_(host_ids)).filter(Task.status.in_(['pending', 'running'])).all()
+        if active_tasks:
+            host_names = [task.host.name for task in active_tasks if task.host]
+            return jsonify({'error': f'Cannot delete hosts: {len(active_tasks)} active task(s) are using these hosts: {", ".join(set(host_names))}'}), 400
+        
+        deleted_count = 0
+        errors = []
+        
+        for host in hosts:
+            try:
+                # Delete related records first to avoid foreign key constraint violations
+                # Delete artifacts that belong to execution history for this host
+                history_records = ExecutionHistory.query.filter_by(host_id=host.id).all()
+                for history in history_records:
+                    # Delete artifacts for this execution
+                    artifacts = Artifact.query.filter_by(execution_id=history.id).all()
+                    for artifact in artifacts:
+                        db.session.delete(artifact)
+                
+                # Delete execution history records for this host
+                ExecutionHistory.query.filter_by(host_id=host.id).delete()
+                
+                # Delete tasks for this host
+                Task.query.filter_by(host_id=host.id).delete()
+                
+                # Finally delete the host
+                db.session.delete(host)
+                deleted_count += 1
+                
+            except Exception as e:
+                errors.append(f'Failed to delete host {host.name}: {str(e)}')
+                print(f"Error deleting host {host.id}: {str(e)}")
+        
+        # Commit all deletions
+        db.session.commit()
+        
+        if errors:
+            return jsonify({
+                'message': f'Bulk delete completed with some errors',
+                'deleted_count': deleted_count,
+                'errors': errors
+            }), 207  # Multi-status
+        else:
+            return jsonify({
+                'message': f'Successfully deleted {deleted_count} host(s)',
+                'deleted_count': deleted_count
+            }), 200
+        
+    except Exception as e:
+        print(f"Error in bulk delete hosts: {str(e)}")
+        db.session.rollback()
+        return jsonify({'error': f'Failed to delete hosts: {str(e)}'}), 500
 
 def _terminate_process_in_background(task_id, process_pid):
     """Terminates a process in the background and updates the task status."""
@@ -1784,6 +1887,80 @@ def get_credential_password(credential_id):
         credential = Credential.query.get_or_404(credential_id)
         return jsonify({'password': credential.password})
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Variables API endpoints
+@app.route('/api/variables', methods=['GET'])
+def get_variables():
+    try:
+        variables = Variable.query.order_by(Variable.key).all()
+        return jsonify([var.to_dict() for var in variables])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/variables', methods=['POST'])
+@jwt_required()
+def create_variable():
+    try:
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        # Check if variable key already exists
+        existing_var = Variable.query.filter_by(key=data['key']).first()
+        if existing_var:
+            return jsonify({'error': 'Variable key already exists'}), 400
+        
+        variable = Variable(
+            key=data['key'].strip(),
+            value=data['value'],
+            description=data.get('description', ''),
+            user_id=current_user_id
+        )
+        
+        db.session.add(variable)
+        db.session.commit()
+        
+        return jsonify(variable.to_dict()), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/variables/<variable_id>', methods=['PUT'])
+@jwt_required()
+def update_variable(variable_id):
+    try:
+        variable = Variable.query.get_or_404(variable_id)
+        data = request.get_json()
+        
+        # Check if the new key conflicts with existing variables (if key is being changed)
+        if 'key' in data and data['key'] != variable.key:
+            existing_var = Variable.query.filter_by(key=data['key']).first()
+            if existing_var:
+                return jsonify({'error': 'Variable key already exists'}), 400
+        
+        if 'key' in data:
+            variable.key = data['key'].strip()
+        if 'value' in data:
+            variable.value = data['value']
+        if 'description' in data:
+            variable.description = data['description']
+        
+        db.session.commit()
+        return jsonify(variable.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/variables/<variable_id>', methods=['DELETE'])
+@jwt_required()
+def delete_variable(variable_id):
+    try:
+        variable = Variable.query.get_or_404(variable_id)
+        db.session.delete(variable)
+        db.session.commit()
+        return jsonify({'message': 'Variable deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 # History routes

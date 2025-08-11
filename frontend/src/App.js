@@ -27,6 +27,7 @@ import History from './components/History';
 import TaskDetail from './components/TaskDetail';
 import Credentials from './components/Credentials';
 import Webhooks from './components/Webhooks';
+import Variables from './components/Variables';
 import Users from './components/Users';
 import Login from './components/Login';
 import socketService from './services/socket';
@@ -212,6 +213,11 @@ function App() {
         label: 'Credentials',
       },
       {
+        key: '/variables',
+        icon: <SettingOutlined />,
+        label: 'Variables',
+      },
+      {
         key: '/webhooks',
         icon: <LinkOutlined />,
         label: 'Webhooks',
@@ -390,6 +396,7 @@ function App() {
               <Route path="/playbooks" element={<Playbooks currentUser={currentUser} />} />
               <Route path="/hosts" element={<Hosts currentUser={currentUser} />} />
               <Route path="/credentials" element={<Credentials currentUser={currentUser} />} />
+              <Route path="/variables" element={<Variables currentUser={currentUser} />} />
               <Route path="/webhooks" element={<Webhooks currentUser={currentUser} />} />
               <Route path="/users" element={<Users currentUser={currentUser} />} />
               <Route path="/editor" element={<PlaybookEditor currentUser={currentUser} />} />

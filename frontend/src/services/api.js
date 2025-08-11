@@ -74,6 +74,7 @@ export const hostsAPI = {
   createBulk: (data) => api.post('/hosts/bulk', data),
   update: (id, data) => api.put(`/hosts/${id}`, data),
   delete: (id) => api.delete(`/hosts/${id}`),
+  bulkDelete: (hostIds) => api.delete('/hosts/bulk-delete', { data: { host_ids: hostIds } }),
 };
 
 // Tasks API
@@ -102,6 +103,13 @@ export const credentialsAPI = {
   update: (id, credential) => api.put(`/credentials/${id}`, credential),
   delete: (id) => api.delete(`/credentials/${id}`),
   getPassword: (id) => api.get(`/credentials/${id}/password`),
+};
+
+export const variablesAPI = {
+  getAll: () => api.get('/variables'),
+  create: (data) => api.post('/variables', data),
+  update: (id, data) => api.put(`/variables/${id}`, data),
+  delete: (id) => api.delete(`/variables/${id}`),
 };
 
 export const webhooksAPI = {

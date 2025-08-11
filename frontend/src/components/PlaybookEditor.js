@@ -30,7 +30,7 @@ import {
   KeyOutlined
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
-import { playbooksAPI, hostsAPI, hostGroupsAPI, tasksAPI, credentialsAPI } from '../services/api';
+import { playbooksAPI, hostsAPI, hostGroupsAPI, tasksAPI, credentialsAPI, variablesAPI } from '../services/api';
 import { hasPermission } from '../utils/permissions';
 
 const { Title } = Typography;
@@ -42,6 +42,7 @@ const PlaybookEditor = ({ currentUser }) => {
   const [hosts, setHosts] = useState([]);
   const [hostGroups, setHostGroups] = useState([]);
   const [credentials, setCredentials] = useState([]);
+  const [globalVariables, setGlobalVariables] = useState([]);
   const [selectedPlaybook, setSelectedPlaybook] = useState(null);
   const [selectedHosts, setSelectedHosts] = useState([]);
   const [selectedGroups, setSelectedGroups] = useState([]);
@@ -52,6 +53,7 @@ const PlaybookEditor = ({ currentUser }) => {
   const [executing, setExecuting] = useState(false);
   const [customAuth, setCustomAuth] = useState(false);
   const [variableValues, setVariableValues] = useState({});
+  const [selectedVariables, setSelectedVariables] = useState([]);
   const [form] = Form.useForm();
   const [variablesForm] = Form.useForm();
 
@@ -60,6 +62,7 @@ const PlaybookEditor = ({ currentUser }) => {
     fetchHosts();
     fetchHostGroups();
     fetchCredentials();
+    fetchGlobalVariables();
   }, []);
 
   const fetchPlaybooks = async () => {
@@ -106,6 +109,15 @@ const PlaybookEditor = ({ currentUser }) => {
     }
   };
 
+  const fetchGlobalVariables = async () => {
+    try {
+      const response = await variablesAPI.getAll();
+      setGlobalVariables(response.data);
+    } catch (error) {
+      message.error('Failed to fetch global variables');
+    }
+  };
+
   const extractVariablesFromContent = (content) => {
     if (!content) return [];
     
@@ -132,10 +144,22 @@ const PlaybookEditor = ({ currentUser }) => {
       // Get all host IDs from selected groups
       const hostIds = [];
       selectedGroups.forEach(groupId => {
-        const groupHosts = hosts.filter(host => host.group_id === groupId);
+        const groupHosts = hosts.filter(host => {
+          // Check if host belongs to group via single group_id OR multiple groups
+          if (host.group_id === groupId) {
+            return true;
+          }
+          
+          // Check if host belongs to group via groups array
+          if (host.groups && host.groups.length > 0) {
+            return host.groups.some(group => group.id === groupId);
+          }
+          
+          return false;
+        });
         hostIds.push(...groupHosts.map(host => host.id));
       });
-      return hostIds;
+      return [...new Set(hostIds)]; // Remove duplicates
     }
   };
 
@@ -155,13 +179,28 @@ const PlaybookEditor = ({ currentUser }) => {
     // Extract variables from playbook content
     const detectedVariables = extractVariablesFromContent(playbook?.content);
     
-    // Initialize variable values
+    // Get assigned variables for this playbook
+    const assignedVariableIds = playbook?.assigned_variables || [];
+    const assignedGlobalVars = globalVariables.filter(gv => assignedVariableIds.includes(gv.id));
+    
+    // Initialize variable values - only use assigned global variables
     const initialValues = {};
+    const initialSelectedVars = [];
+    
     detectedVariables.forEach(variable => {
-      initialValues[variable.name] = '';
+      const assignedVar = assignedGlobalVars.find(gv => gv.key === variable.name);
+      if (assignedVar) {
+        // Use assigned global variable value
+        initialValues[variable.name] = assignedVar.value;
+        initialSelectedVars.push(variable.name);
+      } else {
+        // No assigned global variable, user needs to provide value
+        initialValues[variable.name] = '';
+      }
     });
     
     setVariableValues(initialValues);
+    setSelectedVariables(initialSelectedVars);
     variablesForm.setFieldsValue(initialValues);
   };
 
@@ -177,13 +216,30 @@ const PlaybookEditor = ({ currentUser }) => {
       const detectedVariables = extractVariablesFromContent(value);
       const currentValues = variablesForm.getFieldsValue();
       const newValues = {};
+      const newSelectedVars = [];
+      
+      // Get assigned variables for this playbook
+      const assignedVariableIds = selectedPlaybook?.assigned_variables || [];
+      const assignedGlobalVars = globalVariables.filter(gv => assignedVariableIds.includes(gv.id));
       
       // Keep existing values for variables that still exist
       detectedVariables.forEach(variable => {
-        newValues[variable.name] = currentValues[variable.name] || '';
+        const assignedVar = assignedGlobalVars.find(gv => gv.key === variable.name);
+        if (assignedVar && !currentValues[variable.name]) {
+          // Use assigned global variable value if no current value exists
+          newValues[variable.name] = assignedVar.value;
+          newSelectedVars.push(variable.name);
+        } else {
+          // Keep existing value or set empty
+          newValues[variable.name] = currentValues[variable.name] || '';
+          if (assignedVar && currentValues[variable.name] === assignedVar.value) {
+            newSelectedVars.push(variable.name);
+          }
+        }
       });
       
       setVariableValues(newValues);
+      setSelectedVariables(newSelectedVars);
       variablesForm.setFieldsValue(newValues);
     }
   };
@@ -684,7 +740,7 @@ const PlaybookEditor = ({ currentUser }) => {
             >
               <Alert
                 message="Variables Detected"
-                description={`Found ${detectedVariables.length} variable(s) in your playbook. Please provide values for execution.`}
+                description={`Found ${detectedVariables.length} variable(s) in your playbook. Only variables assigned to this playbook can use global values.`}
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
@@ -695,27 +751,72 @@ const PlaybookEditor = ({ currentUser }) => {
                 onValuesChange={handleVariableChange}
               >
                 <Row gutter={16}>
-                  {detectedVariables.map((variable, index) => (
-                    <Col span={8} key={variable.name}>
-                      <Form.Item
-                        label={
-                          <Space>
-                            <span style={{ fontWeight: 'bold' }}>{variable.name}</span>
-                            <span style={{ color: '#999', fontSize: '12px' }}>
-                              (detected from playbook)
+                  {detectedVariables.map((variable, index) => {
+                    const assignedVariableIds = selectedPlaybook?.assigned_variables || [];
+                    const assignedGlobalVars = globalVariables.filter(gv => assignedVariableIds.includes(gv.id));
+                    const assignedVar = assignedGlobalVars.find(gv => gv.key === variable.name);
+                    const isUsingAssigned = selectedVariables.includes(variable.name);
+                    
+                    return (
+                      <Col span={8} key={variable.name}>
+                        <Form.Item
+                          label={
+                            <Space>
+                              <span style={{ fontWeight: 'bold' }}>{variable.name}</span>
+                              {assignedVar ? (
+                                <Tag color={isUsingAssigned ? 'green' : 'orange'} size="small">
+                                  {isUsingAssigned ? 'Using Assigned' : 'Assigned Available'}
+                                </Tag>
+                              ) : (
+                                <Tag color="red" size="small">
+                                  Not Assigned
+                                </Tag>
+                              )}
+                            </Space>
+                          }
+                          name={variable.name}
+                          rules={[{ required: true, message: `${variable.name} is required` }]}
+                          extra={assignedVar && !isUsingAssigned ? (
+                            <Button 
+                              type="link" 
+                              size="small" 
+                              style={{ padding: 0, height: 'auto' }}
+                              onClick={() => {
+                                const newValues = { ...variableValues, [variable.name]: assignedVar.value };
+                                setVariableValues(newValues);
+                                setSelectedVariables([...selectedVariables, variable.name]);
+                                variablesForm.setFieldsValue(newValues);
+                              }}
+                            >
+                              Use assigned value: "{assignedVar.value}"
+                            </Button>
+                          ) : !assignedVar ? (
+                            <span style={{ color: '#ff4d4f', fontSize: '12px' }}>
+                              This variable is not assigned to this playbook. Go to Playbooks page to assign variables.
                             </span>
-                          </Space>
-                        }
-                        name={variable.name}
-                        rules={[{ required: true, message: `${variable.name} is required` }]}
-                      >
-                        <Input 
-                          placeholder={`Enter value for ${variable.name}`}
-                          style={{ width: '100%' }}
-                        />
-                      </Form.Item>
-                    </Col>
-                  ))}
+                          ) : null}
+                        >
+                          <Input 
+                            placeholder={assignedVar ? `Assigned: ${assignedVar.value}` : `Enter value for ${variable.name}`}
+                            style={{ width: '100%' }}
+                            suffix={assignedVar && isUsingAssigned && (
+                              <Button 
+                                type="text" 
+                                size="small"
+                                onClick={() => {
+                                  const newSelectedVars = selectedVariables.filter(v => v !== variable.name);
+                                  setSelectedVariables(newSelectedVars);
+                                }}
+                                title="Use custom value instead"
+                              >
+                                ×
+                              </Button>
+                            )}
+                          />
+                        </Form.Item>
+                      </Col>
+                    );
+                  })}
                 </Row>
               </Form>
             </Card>

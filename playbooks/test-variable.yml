@@ -1,0 +1,7 @@
+---
+- name: Sample Linux playbook
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update system packages
+      command: echo "{{basem}}"
