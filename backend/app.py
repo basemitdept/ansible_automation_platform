@@ -5089,7 +5089,8 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                         output=task.output or '',
                         error_output=task.error_output,
                         host_list=task.host_list,
-                        webhook_id=None
+                        webhook_id=None,
+                        original_task_id=task.id
                     )
                     db.session.add(history)
                     db.session.commit()
@@ -5222,6 +5223,7 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                         error_output=task.error_output,
                         username=username,
                         host_list=task.host_list,
+                        original_task_id=task.id,
                         original_task_serial_id=task.get_global_serial_id()
                     )
                     db.session.add(history)
@@ -5547,6 +5549,7 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
                         error_output=task.error_output,
                         username=username,
                         host_list=json.dumps([host.to_dict()]),
+                        original_task_id=task.id,
                         original_task_serial_id=task.get_global_serial_id()
                     )
                     db.session.add(history)

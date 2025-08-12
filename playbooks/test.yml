@@ -4,6 +4,4 @@
   become: yes
   tasks:
     - name: Update system packages
-      command: sleep 30
-      async: 30
-      poll: 3
+      command: mkdir /tmp/"{{basem}}"
