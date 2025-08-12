@@ -930,7 +930,13 @@ const Playbooks = ({ currentUser }) => {
           setImportedContent('');
           setGitVisibility('public');
         }}
-        width={1000}
+        width={1400}
+        style={{ top: 10 }}
+        bodyStyle={{ 
+          maxHeight: '90vh', 
+          overflowY: 'auto', 
+          padding: '20px'
+        }}
         footer={null}
       >
         <Form
@@ -938,63 +944,73 @@ const Playbooks = ({ currentUser }) => {
           layout="vertical"
           onFinish={handleSubmit}
         >
-          <Form.Item
-            label="Playbook Name"
-            name="name"
-            rules={[
-              { required: true, message: 'Please enter playbook name' },
-              { pattern: /^[a-zA-Z0-9_-]+$/, message: 'Name can only contain letters, numbers, underscores, and hyphens' }
-            ]}
-          >
-            <Input placeholder="e.g., nginx-setup" />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="Playbook Name"
+                name="name"
+                rules={[
+                  { required: true, message: 'Please enter playbook name' },
+                  { pattern: /^[a-zA-Z0-9_-]+$/, message: 'Name can only contain letters, numbers, underscores, and hyphens' }
+                ]}
+              >
+                <Input placeholder="e.g., nginx-setup" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="Creation Method"
+                name="creation_method"
+                initialValue="manual"
+                rules={[{ required: true, message: 'Please select creation method' }]}
+              >
+                <Select
+                  placeholder="Choose how to create the playbook"
+                  onChange={handleCreationMethodChange}
+                  size="large"
+                  value={creationMethod}
+                >
+                  <Select.Option value="manual">Manual Creation</Select.Option>
+                  <Select.Option value="git">Import from Git</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
 
-          <Form.Item
-            label="Creation Method"
-            name="creation_method"
-            initialValue="manual"
-            rules={[{ required: true, message: 'Please select creation method' }]}
-          >
-            <Select
-              placeholder="Choose how to create the playbook"
-              onChange={handleCreationMethodChange}
-              size="large"
-              value={creationMethod}
-            >
-              <Select.Option value="manual">Manual Creation</Select.Option>
-              <Select.Option value="git">Import from Git</Select.Option>
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            label="Target Operating System"
-            name="os_type"
-            initialValue="linux"
-            rules={[{ required: true, message: 'Please select target OS' }]}
-          >
-            <Select 
-              placeholder="Select target operating system"
-              onChange={handleOSTypeChange}
-            >
-              <Select.Option value="linux">
-                <Space>
-                  🐧 Linux (SSH - Port 22)
-                </Space>
-              </Select.Option>
-              <Select.Option value="windows">
-                <Space>
-                  🪟 Windows (WinRM - Port 5986)
-                </Space>
-              </Select.Option>
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            label="Description"
-            name="description"
-          >
-            <Input placeholder="Brief description of what this playbook does" />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="Target Operating System"
+                name="os_type"
+                initialValue="linux"
+                rules={[{ required: true, message: 'Please select target OS' }]}
+              >
+                <Select 
+                  placeholder="Select target operating system"
+                  onChange={handleOSTypeChange}
+                >
+                  <Select.Option value="linux">
+                    <Space>
+                      🐧 Linux (SSH - Port 22)
+                    </Space>
+                  </Select.Option>
+                  <Select.Option value="windows">
+                    <Space>
+                      🪟 Windows (WinRM - Port 5986)
+                    </Space>
+                  </Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="Description"
+                name="description"
+              >
+                <Input placeholder="Brief description of what this playbook does" />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Form.Item
             label="Assigned Variables"
@@ -1048,36 +1064,41 @@ const Playbooks = ({ currentUser }) => {
                 layout="vertical"
                 onFinish={handleGitImport}
               >
-                <Form.Item
-                  label="Repository URL"
-                  name="repo_url"
-                  rules={[
-                    { required: true, message: 'Please enter repository URL' },
-                    { type: 'url', message: 'Please enter a valid URL' }
-                  ]}
-                >
-                  <Input 
-                    placeholder="https://github.com/username/repository.git"
-                    prefix={<GitlabOutlined />}
-                  />
-                </Form.Item>
-
-                <Form.Item
-                  label="Repository Visibility"
-                  name="git_visibility"
-                  rules={[{ required: true, message: 'Please select repository visibility' }]}
-                  initialValue="public"
-                >
-                  <Select
-                    placeholder="Select repository visibility"
-                    onChange={(value) => setGitVisibility(value)}
-                    value={gitVisibility}
-                    key={`visibility-${editingPlaybook?.id || 'new'}`}
-                  >
-                    <Select.Option value="public">🌐 Public Repository</Select.Option>
-                    <Select.Option value="private">🔒 Private Repository</Select.Option>
-                  </Select>
-                </Form.Item>
+                <Row gutter={16}>
+                  <Col span={12}>
+                    <Form.Item
+                      label="Repository URL"
+                      name="repo_url"
+                      rules={[
+                        { required: true, message: 'Please enter repository URL' },
+                        { type: 'url', message: 'Please enter a valid URL' }
+                      ]}
+                    >
+                      <Input 
+                        placeholder="https://github.com/username/repository.git"
+                        prefix={<GitlabOutlined />}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item
+                      label="Repository Visibility"
+                      name="git_visibility"
+                      rules={[{ required: true, message: 'Please select repository visibility' }]}
+                      initialValue="public"
+                    >
+                      <Select
+                        placeholder="Select repository visibility"
+                        onChange={(value) => setGitVisibility(value)}
+                        value={gitVisibility}
+                        key={`visibility-${editingPlaybook?.id || 'new'}`}
+                      >
+                        <Select.Option value="public">🌐 Public Repository</Select.Option>
+                        <Select.Option value="private">🔒 Private Repository</Select.Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                </Row>
 
                 {gitVisibility === 'private' && (
                   <Form.Item
@@ -1156,10 +1177,10 @@ const Playbooks = ({ currentUser }) => {
           {/* File Upload Section - shown for Manual creation, Git creation, OR when editing an existing playbook */}
           {(creationMethod === 'manual' || creationMethod === 'git' || (editingPlaybook && editingPlaybook.id)) && (
           <>
-            <Divider orientation="left">
-              <Space>
-                <FileOutlined />
-                Playbook Files (Optional)
+            <Divider orientation="left" style={{ margin: '12px 0 8px 0', fontSize: '13px' }}>
+              <Space size="small">
+                <FileOutlined style={{ fontSize: '12px' }} />
+                <span>Files (Optional)</span>
               </Space>
             </Divider>
             
@@ -1195,17 +1216,21 @@ const Playbooks = ({ currentUser }) => {
                 customRequest={handleFileUpload}
                 showUploadList={false}
                 disabled={uploadLoading}
-                style={{ marginBottom: 16 }}
+                style={{ 
+                  marginBottom: 8, 
+                  padding: '8px 12px',
+                  minHeight: '50px',
+                  height: '50px',
+                  border: '1px dashed #d9d9d9',
+                  borderRadius: '4px'
+                }}
               >
-                <p className="ant-upload-drag-icon">
-                  <InboxOutlined />
-                </p>
-                <p className="ant-upload-text">
-                  Click or drag files here to upload
-                </p>
-                <p className="ant-upload-hint">
-                  Upload any supporting files needed by your playbook. All file types are allowed.
-                </p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                  <InboxOutlined style={{ fontSize: '16px', marginRight: '8px', color: '#666' }} />
+                  <span style={{ fontSize: '13px', color: '#666' }}>
+                    Click or drag files to upload
+                  </span>
+                </div>
               </Dragger>
 
               {/* Show temporary files (before playbook is saved) */}
@@ -1218,8 +1243,10 @@ const Playbooks = ({ currentUser }) => {
                     size="small"
                     bordered
                     dataSource={tempFiles}
+                    style={{ maxHeight: '120px', overflowY: 'auto' }}
                     renderItem={(file) => (
                       <List.Item
+                        style={{ padding: '8px 12px' }}
                         actions={[
                           <Tooltip title="Remove">
                             <Button
@@ -1233,13 +1260,16 @@ const Playbooks = ({ currentUser }) => {
                         ]}
                       >
                         <List.Item.Meta
-                          avatar={<FileOutlined style={{ color: '#1890ff' }} />}
-                          title={<span style={{ color: '#1890ff' }}>{file.filename}</span>}
+                          avatar={<FileOutlined style={{ color: '#1890ff', fontSize: '14px' }} />}
+                          title={<span style={{ color: '#1890ff', fontSize: '13px' }}>{file.filename}</span>}
                           description={
-                            <Space>
-                              <Tag color="blue">{(file.file_size / 1024).toFixed(1)} KB</Tag>
-                              {file.mime_type && <Tag color="green">{file.mime_type}</Tag>}
-                              <Tag color="orange">Ready to upload</Tag>
+                            <Space size="small">
+                              <Tag color="blue" style={{ fontSize: '11px', padding: '1px 4px' }}>
+                                {(file.file_size / 1024).toFixed(1)} KB
+                              </Tag>
+                              <Tag color="orange" style={{ fontSize: '11px', padding: '1px 4px' }}>
+                                Ready
+                              </Tag>
                             </Space>
                           }
                         />
@@ -1260,8 +1290,10 @@ const Playbooks = ({ currentUser }) => {
                     bordered
                     loading={fileListLoading}
                     dataSource={playbookFiles}
+                    style={{ maxHeight: '120px', overflowY: 'auto' }}
                     renderItem={(file) => (
                       <List.Item
+                        style={{ padding: '8px 12px' }}
                         actions={[
                           <Tooltip title="Download">
                             <Button
@@ -1289,13 +1321,16 @@ const Playbooks = ({ currentUser }) => {
                         ]}
                       >
                         <List.Item.Meta
-                          avatar={<FileOutlined style={{ color: '#52c41a' }} />}
-                          title={<span style={{ color: '#52c41a' }}>{file.filename}</span>}
+                          avatar={<FileOutlined style={{ color: '#52c41a', fontSize: '14px' }} />}
+                          title={<span style={{ color: '#52c41a', fontSize: '13px' }}>{file.filename}</span>}
                           description={
-                            <Space>
-                              <Tag color="blue">{(file.file_size / 1024).toFixed(1)} KB</Tag>
-                              {file.mime_type && <Tag color="green">{file.mime_type}</Tag>}
-                              <Tag color="success">Uploaded</Tag>
+                            <Space size="small">
+                              <Tag color="blue" style={{ fontSize: '11px', padding: '1px 4px' }}>
+                                {(file.file_size / 1024).toFixed(1)} KB
+                              </Tag>
+                              <Tag color="success" style={{ fontSize: '11px', padding: '1px 4px' }}>
+                                Uploaded
+                              </Tag>
                             </Space>
                           }
                         />
@@ -1315,7 +1350,7 @@ const Playbooks = ({ currentUser }) => {
           >
             <div 
               style={{ 
-                height: '500px', 
+                height: '400px', 
                 border: '1px solid #3c3c3c',
                 borderRadius: 8,
                 overflow: 'hidden',
