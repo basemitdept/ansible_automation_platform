@@ -559,12 +559,35 @@ const Playbooks = ({ currentUser }) => {
       let replacedCount = 0;
       let uploadedCount = 0;
       
-      for (const tempFile of tempFiles) {
+      for (let i = 0; i < tempFiles.length; i++) {
+        const tempFile = tempFiles[i];
+        setUploadingFileName(tempFile.filename);
+        setUploadProgress(0);
+        
         const formData = new FormData();
         formData.append('file', tempFile.fileObject);
         formData.append('description', tempFile.description);
         
-        const response = await playbookFilesAPI.upload(playbookId, formData);
+        console.log(`🚀 Uploading temp file ${i + 1}/${tempFiles.length}: ${tempFile.filename}`);
+        
+        const response = await playbookFilesAPI.upload(
+          playbookId, 
+          formData,
+          {
+            timeout: 600000, // 10 minutes timeout for large files
+            onUploadProgress: (event) => {
+              if (event.total) {
+                const percent = Math.round((event.loaded * 100) / event.total);
+                const mbLoaded = (event.loaded / 1024 / 1024).toFixed(1);
+                const mbTotal = (event.total / 1024 / 1024).toFixed(1);
+                console.log(`📊 Upload progress for ${tempFile.filename}: ${percent}% (${mbLoaded}MB/${mbTotal}MB)`);
+                setUploadProgress(percent);
+              } else {
+                console.log(`📊 Upload progress for ${tempFile.filename}: ${event.loaded} bytes (total unknown)`);
+              }
+            }
+          }
+        );
         
         if (response.data.replaced) {
           replacedCount++;
@@ -588,6 +611,8 @@ const Playbooks = ({ currentUser }) => {
       message.error('Failed to upload some files');
     } finally {
       setUploadLoading(false);
+      setUploadProgress(0);
+      setUploadingFileName('');
     }
   };
 
@@ -1128,8 +1153,8 @@ const Playbooks = ({ currentUser }) => {
             </>
           )}
 
-          {/* File Upload Section - shown for Manual creation OR when editing an existing playbook */}
-          {(creationMethod === 'manual' || (editingPlaybook && editingPlaybook.id)) && (
+          {/* File Upload Section - shown for Manual creation, Git creation, OR when editing an existing playbook */}
+          {(creationMethod === 'manual' || creationMethod === 'git' || (editingPlaybook && editingPlaybook.id)) && (
           <>
             <Divider orientation="left">
               <Space>
