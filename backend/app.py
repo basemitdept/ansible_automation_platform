@@ -97,20 +97,26 @@ FILES_DIR = '/app/playbook_files'
 os.makedirs(PLAYBOOKS_DIR, exist_ok=True)
 os.makedirs(FILES_DIR, exist_ok=True)
 
-# Configure file upload settings
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+# Configure file upload settings (configurable; unset means unlimited)
+_max_upload_mb = os.environ.get('MAX_UPLOAD_MB')
+try:
+    app.config['MAX_CONTENT_LENGTH'] = int(_max_upload_mb) * 1024 * 1024 if _max_upload_mb else None
+    print(f"🔧 MAX_CONTENT_LENGTH set to: {app.config['MAX_CONTENT_LENGTH']} bytes ({_max_upload_mb} MB)" if _max_upload_mb else "🔧 MAX_CONTENT_LENGTH: Unlimited")
+except Exception:
+    app.config['MAX_CONTENT_LENGTH'] = None
+    print("🔧 MAX_CONTENT_LENGTH: Unlimited (fallback)")
+
+# Also check if there are any other upload limits
+print(f"🔧 Current upload config: MAX_CONTENT_LENGTH = {app.config.get('MAX_CONTENT_LENGTH', 'None (unlimited)')}")
 
 # Global dictionary to track running processes by task ID
 running_processes = {}
-ALLOWED_EXTENSIONS = {
-    'txt', 'py', 'sh', 'bash', 'ps1', 'bat', 'cmd', 'sql', 'json', 'xml', 'yml', 'yaml',
-    'conf', 'config', 'ini', 'properties', 'service', 'timer', 'socket', 'mount',
-    'tar', 'gz', 'zip', 'deb', 'rpm', 'pkg', 'dmg', 'msi', 'exe', 'jar', 'war'
-}
+# Allow all file extensions for playbook file uploads
+ALLOWED_EXTENSIONS = None
 
 def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    # We already validate non-empty filename elsewhere; allow any extension here
+    return True
 
 def create_ansible_user_if_needed():
     """Create ansible_user role if it doesn't exist (for app startup)"""
@@ -827,18 +833,29 @@ def get_playbook_files(playbook_id):
 @app.route('/api/playbooks/<playbook_id>/files', methods=['POST'])
 def upload_playbook_file(playbook_id):
     """Upload a file for a playbook"""
+    print(f"🔺 File upload request for playbook {playbook_id}")
     playbook = Playbook.query.get_or_404(playbook_id)
     
     if 'file' not in request.files:
+        print("❌ No file in request")
         return jsonify({'error': 'No file provided'}), 400
     
     file = request.files['file']
     description = request.form.get('description', '')
     
+    print(f"📁 File details: name={file.filename}, size={file.content_length}, type={file.content_type}")
+    
+    # Check file size (if content_length is available)
+    if file.content_length and file.content_length > 100 * 1024 * 1024:  # 100MB limit as fallback
+        print(f"❌ File too large: {file.content_length} bytes")
+        return jsonify({'error': f'File too large. Size: {file.content_length} bytes. Max allowed: 100MB'}), 413
+    
     if file.filename == '':
+        print("❌ Empty filename")
         return jsonify({'error': 'No file selected'}), 400
     
     if not allowed_file(file.filename):
+        print(f"❌ File type not allowed: {file.filename}")
         return jsonify({'error': 'File type not allowed'}), 400
     
     try:
@@ -865,11 +882,14 @@ def upload_playbook_file(playbook_id):
             file_replaced = True
         
         # Save new file to disk
+        print(f"💾 Saving file to: {file_path}")
         file.save(file_path)
+        print(f"✅ File saved successfully")
         
         # Get file info
         file_size = os.path.getsize(file_path)
         mime_type, _ = mimetypes.guess_type(file_path)
+        print(f"📊 File info: size={file_size}, mime_type={mime_type}")
         
         # Create database record
         playbook_file = PlaybookFile(

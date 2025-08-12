@@ -11,6 +11,7 @@ import {
   Space,
   Typography,
   Tag,
+  Progress,
   Upload,
   List,
   Divider,
@@ -61,6 +62,8 @@ const Playbooks = ({ currentUser }) => {
   const [playbookFiles, setPlaybookFiles] = useState([]);
   const [fileListLoading, setFileListLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadingFileName, setUploadingFileName] = useState('');
   const [canUploadFiles, setCanUploadFiles] = useState(false);
   const [tempFiles, setTempFiles] = useState([]); // Store files before playbook is saved
   
@@ -410,35 +413,31 @@ const Playbooks = ({ currentUser }) => {
     }
   };
 
-  const handleFileUpload = async (info) => {
-    const { file } = info;
+  const handleFileUpload = async (options) => {
+    const { file, onProgress, onError, onSuccess } = options;
     
-    if (file.status === 'uploading') {
-      setUploadLoading(true);
-      return false;
-    }
-
-    if (file.status === 'done' || file.status === 'error') {
-      setUploadLoading(false);
-    }
+    console.log('🔺 Upload initiated:', {
+      filename: file.name,
+      size: file.size,
+      type: file.type,
+      playbookId: editingPlaybook?.id,
+      hasPlaybook: !!editingPlaybook?.id
+    });
 
     // If playbook doesn't exist yet, store files temporarily
     if (!editingPlaybook?.id) {
-      // Check if file with same name already exists in temp files
+      console.log('📦 Adding to temp files (playbook not saved yet)');
       const existingTempIndex = tempFiles.findIndex(tf => tf.filename === file.name);
-      
       const tempFile = {
-        id: Date.now() + Math.random(), // Temporary ID
+        id: Date.now() + Math.random(),
         filename: file.name,
         file_size: file.size,
         mime_type: file.type,
         description: '',
-        fileObject: file, // Store the actual file object
+        fileObject: file,
         isTemp: true
       };
-      
       if (existingTempIndex >= 0) {
-        // Replace existing temp file
         setTempFiles(prev => {
           const updated = [...prev];
           updated[existingTempIndex] = tempFile;
@@ -446,38 +445,76 @@ const Playbooks = ({ currentUser }) => {
         });
         message.warning(`${file.name} replaced in queue (will be uploaded with playbook)`);
       } else {
-        // Add new temp file
         setTempFiles(prev => [...prev, tempFile]);
         message.success(`${file.name} ready to upload (will be saved with playbook)`);
       }
-      
-      return false;
+      if (onSuccess) onSuccess({}, file);
+      return;
     }
 
-    // If playbook exists, upload immediately
+    // Upload immediately with progress
     const formData = new FormData();
     formData.append('file', file);
     formData.append('description', '');
 
+    console.log('🚀 Starting upload to existing playbook:', editingPlaybook.id);
+
     try {
+      console.log('🔄 Setting upload states...');
       setUploadLoading(true);
-      const response = await playbookFilesAPI.upload(editingPlaybook.id, formData);
+      setUploadingFileName(file.name);
+      setUploadProgress(0);
+      console.log('✅ Upload states set - loading should now be visible');
       
-      // Check if file was replaced
+      const response = await playbookFilesAPI.upload(
+        editingPlaybook.id,
+        formData,
+        {
+          timeout: 600000, // 10 minutes timeout for large files
+          onUploadProgress: (event) => {
+            if (event.total) {
+              const percent = Math.round((event.loaded * 100) / event.total);
+              const mbLoaded = (event.loaded / 1024 / 1024).toFixed(1);
+              const mbTotal = (event.total / 1024 / 1024).toFixed(1);
+              console.log(`📊 Upload progress: ${percent}% (${mbLoaded}MB/${mbTotal}MB)`);
+              setUploadProgress(percent);
+              if (onProgress) onProgress({ percent });
+            } else {
+              console.log(`📊 Upload progress: ${event.loaded} bytes (total unknown)`);
+            }
+          }
+        }
+      );
+
+      console.log('✅ Upload successful:', response.data);
       if (response.data.replaced) {
         message.warning(response.data.message || `${file.name} replaced successfully`);
       } else {
         message.success(response.data.message || `${file.name} uploaded successfully`);
       }
-      
       fetchPlaybookFiles(editingPlaybook.id);
+      if (onSuccess) onSuccess(response.data, file);
     } catch (error) {
-      message.error(`Failed to upload ${file.name}`);
+      console.error('❌ Upload failed:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      
+      let errorMessage = `Failed to upload ${file.name}`;
+      if (error.response?.status === 413) {
+        errorMessage = `File ${file.name} is too large`;
+      } else if (error.response?.status === 504) {
+        errorMessage = `Upload timeout for ${file.name} - file may be too large`;
+      } else if (error.response?.data?.error) {
+        errorMessage = `Upload failed: ${error.response.data.error}`;
+      }
+      
+      message.error(errorMessage);
+      if (onError) onError(error);
     } finally {
       setUploadLoading(false);
+      setUploadingFileName('');
+      setUploadProgress(0);
     }
-
-    return false;
   };
 
   const handleFileDelete = async (fileId) => {
@@ -1091,8 +1128,8 @@ const Playbooks = ({ currentUser }) => {
             </>
           )}
 
-          {/* File Upload Section - Only for Manual Creation */}
-          {creationMethod === 'manual' && (
+          {/* File Upload Section - shown for Manual creation OR when editing an existing playbook */}
+          {(creationMethod === 'manual' || (editingPlaybook && editingPlaybook.id)) && (
           <>
             <Divider orientation="left">
               <Space>
@@ -1102,6 +1139,31 @@ const Playbooks = ({ currentUser }) => {
             </Divider>
             
             <div style={{ marginBottom: 16 }}>
+              {/* Show upload progress when uploading */}
+              {uploadLoading && (
+                <div style={{ marginBottom: 12, padding: 12, border: '1px solid #1890ff', borderRadius: 6, backgroundColor: '#f0f9ff' }}>
+                  <div style={{ marginBottom: 6, fontWeight: 'bold', color: '#1890ff' }}>
+                    📤 Uploading {uploadingFileName}...
+                  </div>
+                  <Progress 
+                    percent={uploadProgress} 
+                    status={uploadProgress === 100 ? 'success' : 'active'}
+                    strokeColor="#1890ff"
+                    showInfo={true}
+                  />
+                  <div style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
+                    {uploadProgress}% complete
+                  </div>
+                </div>
+              )}
+              
+              {/* Debug info - remove this later */}
+              {process.env.NODE_ENV === 'development' && (
+                <div style={{ fontSize: '10px', color: '#999', marginBottom: 8 }}>
+                  Debug: uploadLoading={uploadLoading.toString()}, progress={uploadProgress}%, fileName={uploadingFileName}
+                </div>
+              )}
+
               <Dragger
                 name="file"
                 multiple={true}
@@ -1117,8 +1179,7 @@ const Playbooks = ({ currentUser }) => {
                   Click or drag files here to upload
                 </p>
                 <p className="ant-upload-hint">
-                  Upload scripts, config files, or other assets needed by your playbook.
-                  Supported formats: .py, .sh, .conf, .json, .xml, .tar, .zip, etc.
+                  Upload any supporting files needed by your playbook. All file types are allowed.
                 </p>
               </Dragger>
 

@@ -1,0 +1,558 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2761
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 HelveticaNeue;\f1\fnil\fcharset0 Menlo-Regular;\f2\fnil\fcharset0 Menlo-Bold;
+\f3\fnil\fcharset0 HelveticaNeue-Bold;\f4\fswiss\fcharset0 Helvetica-Bold;\f5\fswiss\fcharset0 Helvetica;
+\f6\fmodern\fcharset0 Courier-Bold;\f7\froman\fcharset0 Times-Roman;\f8\fmodern\fcharset0 Courier;
+}
+{\colortbl;\red255\green255\blue255;\red38\green38\blue38;\red242\green242\blue242;\red59\green59\blue59;
+\red255\green255\blue255;\red10\green89\blue230;\red247\green247\blue247;\red4\green45\blue91;\red152\green66\blue3;
+\red49\green49\blue49;\red242\green242\blue242;\red11\green12\blue12;}
+{\*\expandedcolortbl;;\cssrgb\c20000\c20000\c20000;\cssrgb\c96078\c96078\c96078;\cssrgb\c29804\c29804\c29804;
+\cssrgb\c100000\c100000\c100000;\cssrgb\c0\c44706\c92157;\cssrgb\c97647\c97647\c97647;\cssrgb\c0\c23922\c43137;\cssrgb\c66667\c33333\c0;
+\cssrgb\c25098\c25098\c25098;\cssrgb\c96078\c96078\c96078;\cssrgb\c4706\c5098\c5490;}
+{\*\listtable{\list\listtemplateid1\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{hyphen\}}{\leveltext\leveltemplateid1\'01\uc0\u8259 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{hyphen\}}{\leveltext\leveltemplateid2\'01\uc0\u8259 ;}{\levelnumbers;}\fi-360\li1440\lin1440 }{\listname ;}\listid1}
+{\list\listtemplateid2\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{hyphen\}}{\leveltext\leveltemplateid101\'01\uc0\u8259 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid2}
+{\list\listtemplateid3\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{hyphen\}}{\leveltext\leveltemplateid201\'01\uc0\u8259 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid3}
+{\list\listtemplateid4\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{hyphen\}}{\leveltext\leveltemplateid301\'01\uc0\u8259 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid4}}
+{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}{\listoverride\listid2\listoverridecount0\ls2}{\listoverride\listid3\listoverridecount0\ls3}{\listoverride\listid4\listoverridecount0\ls4}}
+\margl1440\margr1440\vieww28600\viewh18000\viewkind0
+\deftab560
+\pard\pardeftab560\slleading20\partightenfactor0
+
+\f0\fs26 \cf0 DO370\
+\
+1- create an odf cluster using local volume.\
+\pard\pardeftab560\pardirnatural\partightenfactor0
+\ls1\ilvl1
+\fs24 \cf0 {\listtext	\uc0\u8259 	}
+\fs26 Node label \'91cluster.ocs.openshift.io/openshift-storage'\
+\ls1\ilvl1
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Install local-storage operator\
+\ls1\ilvl1
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Configure LocalStorageDiscovery ( LocalStorageDiscoveryResult)\
+\ls1\ilvl1
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Configure LocalStorageSet\
+\ls1\ilvl1
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Install ODF Operator\
+\ls1\ilvl1
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Configure ODF\
+\pard\tx720\tx1440\pardeftab560\pardirnatural\partightenfactor0
+\cf0 \
+
+\fs24 Answer:\
+\
+\pard\pardeftab720\partightenfactor0
+
+\f1 \cf2 \cb3 \expnd0\expndtw0\kerning0
+ $
+\f2\b oc label nodes \\\
+  -l node-role.kubernetes.io/worker= \\\
+  cluster.ocs.openshift.io/openshift-storage=
+\f1\b0\fs26 \
+\pard\tx720\tx1440\pardeftab560\pardirnatural\partightenfactor0
+
+\f0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \
+$ install
+\f3\b  local storage
+\f0\b0  and 
+\f3\b OCS 
+\f0\b0 \
+\
+$ configure Local storage \
+$ 
+\f4\b \cf4 \cb5 \expnd0\expndtw0\kerning0
+Create Local Volume Discovery
+\f5\b0 . Select\'a0
+\f4\b All nodes
+\f5\b0 \'a0in the\'a0
+\f4\b Node Selector
+\f5\b0 \'a0field, and then click\'a0
+\f4\b Create
+\f5\b0 .\
+
+\fs24 $ Select the\'a0
+\f4\b Local Volume Set
+\f5\b0 \'a0tab, and then click\'a0
+\f4\b Create Local Volume Set
+\f5\b0 . Type\'a0
+\f1 lso-volumeset
+\f5 \'a0in the\'a0
+\f4\b Volume Set Name
+\f5\b0 \'a0field. Select\'a0
+\f4\b All nodes
+\f5\b0 \'a0in the\'a0
+\f4\b Node Selector
+\f5\b0 \'a0field, and then click\'a0
+\f4\b Create
+\f5\b0 .
+\fs32 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\tx720\tx1440\pardeftab560\pardirnatural\partightenfactor0
+
+\f0\fs26 \cf0 \cb1 \kerning1\expnd0\expndtw0 $ OCS configuration.\
+
+\fs24 $ 
+\f5 \cf4 \cb5 \expnd0\expndtw0\kerning0
+After the operator installation completes, click\'a0
+\f4\b Create StorageCluster
+\f5\b0 .\
+\pard\pardeftab720\partightenfactor0
+\cf4 $Select the\'a0
+\f4\b Internal - Attached Devices
+\f5\b0 \'a0mode, and then select the\'a0
+\f1 lso-volumeset
+\f5 \'a0Storage Class. Wait until all of the worker nodes are listed, and then click\'a0
+\f4\b Next
+\f5\b0 . And create .
+\fs32 \
+
+\f0\fs26 \cf0 \cb1 \kerning1\expnd0\expndtw0 \
+\pard\tx720\tx1440\pardeftab560\pardirnatural\partightenfactor0
+\cf0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 \
+2- configure the registry to use odf , Object Storage .\
+ 	- Check if any supported yaml example\
+	- From Web-Ui, create OBC\
+      	- oc get cm \
+	- oc get secret\
+        - create a secret using ACCESSID and KEY with specific secret name\
+        - patch the crd/image\
+        - validation: cat /var/run/secrets/cloud/credentials\
+\
+\
+Answer:\
+\
+- Create OBC using web-ui or CLI\
+\
+Step-1\
+\'85\
+\pard\pardeftab720\partightenfactor0
+
+\f1 \cf2 \cb3 \expnd0\expndtw0\kerning0
+apiVersion: objectbucket.io/v1alpha1\
+kind: ObjectBucketClaim\
+metadata:\
+  name: 
+\f2\b noobaa-registry
+\f1\b0 \
+  namespace: 
+\f2\b openshift-image-registry
+\f1\b0 \
+spec:\
+  additionalConfig:\
+    bucketclass: noobaa-default-bucket-class\
+  generateBucketName: 
+\f2\b noobaa-registry
+\f1\b0 \
+  storageClassName: 
+\f2\b openshift-storage.noobaa.io
+\f1\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+
+\f0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \'85\
+Step-2:\
+- get the secret and extract it (secret name based on your obc name). And create an another secret.\
+\
+\pard\pardeftab720\partightenfactor0
+
+\f2\b \cf2 \cb3 \expnd0\expndtw0\kerning0
+$oc extract secret/noobaa-registry \\\
+  -n openshift-image-registry
+\f1\b0 \
+AWS_ACCESS_KEY_ID\
+AWS_SECRET_ACCESS_KEY\
+\
+\
+\pard\pardeftab560\slleading20\partightenfactor0
+
+\f0 \cf0 \cb1 \kerning1\expnd0\expndtw0 $
+\f2\b \cf2 \cb3 \expnd0\expndtw0\kerning0
+oc create secret generic \\\
+\pard\pardeftab720\partightenfactor0
+\cf2   image-registry-private-configuration-user \\\
+  --from-literal=REGISTRY_STORAGE_S3_ACCESSKEY="$(cat AWS_ACCESS_KEY_ID)" \\\
+  --from-literal=REGISTRY_STORAGE_S3_SECRETKEY="$(cat AWS_SECRET_ACCESS_KEY)" \\\
+  -n openshift-image-registry
+\f1\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+
+\f0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \
+Step-3:\
+- Get the CM and extract it and update the below CRD file (cm name based on your obc name)\
+\
+Step-4\
+- oc get crd | grep image\
+- $ oc edit 
+\f2\b \cf2 \cb3 \expnd0\expndtw0\kerning0
+configs.imageregistry
+\f1\b0 \
+
+\f0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \
+Add below lines:\
+ \
+     Spec:\
+        pvc: null\
+         s3:\
+           bucket: noobaa-registry-038ca5ee-d9ed-4b20-997a-c72058af2426\
+           region: us-east-1\
+           regionEndpoint: https://s3-openshift-storage.apps.ocp4.example.com\
+		\
+\
+3- configure monitoring resources Prometheus & Alertmanager to use storage class RBD. \
+     Alertmanager 8Gi.\
+     Prometheus 10Gi\
+    Retention policy 5days\
+\
+\pard\pardeftab560\pardirnatural\partightenfactor0
+\ls2\ilvl0
+\fs24 \cf0 {\listtext	\uc0\u8259 	}
+\fs26 Check the documents\
+\ls2\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 pre-Validation\
+\ls2\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Create a CM with details\
+\ls2\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Apply it \
+\ls2\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Post-Validation\
+\pard\tx720\pardeftab560\pardirnatural\partightenfactor0
+\cf0 \
+\
+\pard\tx720\pardeftab560\pardirnatural\partightenfactor0
+\cf0 Answer: \
+- 
+\f1 \cf2 \cb3 \expnd0\expndtw0\kerning0
+ 
+\f2\b oc get storageclasses -o name (find the RBD SC)\
+- Follow the RH docs(You will get it on EXAM ENV)\
+\
+Permetheus:\
+\
+- Create a file $ vi prometheus-storage.yaml\
+\'85\
+\pard\pardeftab720\partightenfactor0
+
+\f6 \cf6 \cb7 apiVersion\cf8 : \cf9 v1\cf8 \
+\cf6 kind\cf8 : \cf9 ConfigMap\cf8 \
+\cf6 metadata\cf8 :\
+  \cf6 name\cf8 : \cf9 cluster-monitoring-config\cf8 \
+  \cf6 namespace\cf8 : \cf9 openshift-monitoring\cf8 \
+\cf6 data\cf8 :\
+  \cf9 config.yaml\cf8 : |\
+    \cf9 prometheusK8s: \cf8 \
+      \cf9 volumeClaimTemplate:\cf8 \
+        \cf9 spec:\cf8 \
+          \cf9 storageClassName: <mention OCS RBD SC name $ oc get sc>\cf8 \
+          \cf9 volumeMode: Block\
+          retention: 5d\cf8 \
+          \cf9 resources:\cf8 \
+            \cf9 requests:\cf8 \
+              \cf9 storage: 10Gi\
+\'85
+\f1\b0 \cf2 \cb3 \
+\pard\tx720\pardeftab560\pardirnatural\partightenfactor0
+
+\f0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 $ oc apply -f 
+\f2\b \cf2 \cb3 \expnd0\expndtw0\kerning0
+prometheus-storage.yaml 
+\f0\b0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \
+\
+\
+\
+$ vi alert manager-storage.yaml\
+\
+\'85\
+\pard\pardeftab720\partightenfactor0
+
+\f6\b \cf8 \cb7 \expnd0\expndtw0\kerning0
+apiVersion: v1\
+kind: ConfigMap\
+metadata:\
+  name: cluster-monitoring-config\
+  namespace: openshift-monitoring\
+data:\
+  config.yaml: |\
+    \cf10 alertmanagerMain\cf8 :\
+      volumeClaimTemplate:\
+        spec:\
+          storageClassName: \cf9 <mention OCS RBD SC name $ oc get sc>\
+          retention: 5d\cf8 \
+          resources:\
+            requests:\
+              storage: \cf10 10Gi\
+\'85
+\f0\b0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 \
+$oc apply -f manager-storage.yaml\
+\
+\
+Validation:\
+\pard\pardeftab720\partightenfactor0
+
+\f2\b \cf2 \cb11 \expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 oc exec -n openshift-monitoring \\\
+  statefulset/prometheus-k8s -c prometheus -- df -h /prometheus
+\f1\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+
+\f0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 \
+\pard\pardeftab720\partightenfactor0
+
+\f2\b \cf2 \cb11 \expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 oc exec -n openshift-monitoring \\\
+  statefulset/alertmanager-main -c alertmanager -- df -h /alertmanager
+\f1\b0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+
+\f0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 \
+\
+Please follow this docs \
+\
+https://docs.openshift.com/container-platform/4.10/monitoring/configuring-the-monitoring-stack.html#prerequisites\
+\pard\tx720\pardeftab560\pardirnatural\partightenfactor0
+\cf0 \
+\
+\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 \
+4- create a storage class with name gaia from provisioner [{\field{\*\fldinst{HYPERLINK "http://openshift-storage.cephfs.csi.ceph.com/"}}{\fldrslt openshift-storage.cephfs.csi.ceph.com}}]make sure it retains the data after deleting the pvc and the volume is bind only after pod is created .\
+\
+Answer:\
+\
+- Create new SC from web-UI\
+  > OpenShift web-ui > storage > Storage Class > Create Storage Class \
+   Name: Give the name\
+  Reclaim Policy : Retain\
+ Provisioner: {\field{\*\fldinst{HYPERLINK "http://openshift-storage.cephfs.csi.ceph.com/"}}{\fldrslt openshift-storage.cephfs.csi.ceph.com}}\
+\
+Create it.\
+\
+- Again edit the new SC  and update the (volumebindingmode == waitigforfirstconsumer)\
+\
+\
+\
+5- Create a pvc using the new storage class and map it to application.\
+     Application name is xxx and image is xxxx\
+     Application data mount path is /opt/data\
+     Expose the application\
+     Store some data \
+\
+Answer:\
+\
+0) oc create deployment hello-world \'97image=registry-name\
+\
+1) Create a pvc using web-console\
+   > OpenShift web ui  > storage > PVC > Create (choose the NS) > \
+Storage Class: New storage class name (as per the question 4)\
+PVC name: as per question\
+Size: as per question\
+Access mode: as per the question\
+\
+2) oc get deployment\
+\
+3) oc set volume dc/hello-world --add --name=v1 -m /opt/data\
+\
+4) oc edit deployment/helloworld \
+\'85\
+      volumes:\
+      - name: v1\
+        persistentVolumeClaim:\
+          claimName: pvc-name\
+\'85\
+\
+5) oc get po ; oc get pvc\
+\
+\
+\
+6- Troubleshoot an application that is crashlooping .  Application should be accessible through route\
+    \
+\pard\pardeftab560\pardirnatural\partightenfactor0
+\ls3\ilvl0
+\fs24 \cf0 {\listtext	\uc0\u8259 	}
+\fs26 Oc logs po (mount is missing /data)\
+\ls3\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Create mount path /data \
+\ls3\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Oc create pvc with 450Gi\
+\ls3\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Add mount pvc to deployment\
+\ls3\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Access the application \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 \
+\
+Answer:\
+\
+\
+- $ o logs pod-name\
+- $ oc get deployment\
+- $  oc set volume deployment/deployment-name --add --name=v1 -m /data --overwrite\
+\
+- $ create a pvc with 450Gi using OpenShift web console (Note: if you are creating a pvc with less size, application will not work)\
+- Update the deployment file with pvc details\
+\
+   volumes:\
+    - name: site-data\
+      persistentVolumeClaim:\
+        claimName: my-site-data\
+- $ test the application, it should work\
+\
+\
+\
+7- resource management, create project named xenon and assign role bindings to users, user ahmed can do oc get all only,\
+user khalid should be able to create serviceaccounts,\
+also make sure the pvcs are created in the same project with minimum of 1 Gi and maximum of 10Gi\
+\
+\
+\
+apiVersion: "v1"\
+kind: "LimitRange"\
+metadata:\
+  name: "pvc-limit-range"\
+spec:\
+  limits:\
+    - type: "PersistentVolumeClaim"\
+      min:\
+        storage: "1Gi"\
+      max:\
+        storage: "5Gi"\
+\
+\
+8- create resource quotas, max storage 50G and maximum pvc requests 5,\
+and for the newly create storage class gaia maximum storage 10Gi and maximum pvc requests 2\
+\
+	-	Create Quota from Web-UI > and use the simple example > modify the values\
+\
+<storage-class-name>.{\field{\*\fldinst{HYPERLINK "http://storageclass.storage.k8s.io/requests.storage:"}}{\fldrslt storageclass.storage.k8s.io/requests.storage:}} 2Gi\
+<storage-class-name>.{\field{\*\fldinst{HYPERLINK "http://storageclass.storage.k8s.io/persistentvolumeclaim:"}}{\fldrslt storageclass.storage.k8s.io/persistentvolumeclaim:}} 1\
+Requests.storage: 5Gi\
+Persistentvoluleclaim: 3\
+\
+\
+\
+9- Application is not working, there are private keys that you have to download from link ...\
+\pard\pardeftab560\pardirnatural\partightenfactor0
+\ls4\ilvl0
+\fs24 \cf0 {\listtext	\uc0\u8259 	}
+\fs26 Add mount path /data inside of deployment\
+\ls4\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 PVC 500Mi with name xxxx form CEPH.FS sc\
+\ls4\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Download a file to /data location\
+\ls4\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Download a tar file\
+\ls4\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Extract it (directory I will get)\
+\ls4\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Create secret xxx using that directory\
+\ls4\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Add secret to application user home directory\
+\ls4\ilvl0
+\fs24 {\listtext	\uc0\u8259 	}
+\fs26 Access the application\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 \
+\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 Answer:\
+- oc get deployment \
+- oc set volume deployment/deployment-name --add --name=v1 -m /data --overwrite\
+- Create pvc with 500Mi , name is (as per the question) and use storage class is ceph FS (file storage)\
+- oc get po \
+- oc rsh pod-name \
+- df -h \
+- cd /data\
+- wget (paste the URL name and download the file)\
+\
+IF it\'92s not work.\
+\
+- wget  (paste the URL name and download the file) on your local machine.\
+- oc cp file <pod-name>/data\
+\
+- again download a tar file to your local machine (use wget command)\
+- extract it tar xvzf file-name\
+- Create a secret using above file\
+- add it to your application \
+\pard\pardeftab720\partightenfactor0
+
+\f7 \cf12 \expnd0\expndtw0\kerning0
+\
+volumes:
+\fs24 \
+      
+\fs26 -
+\fs24  
+\fs26 name:
+\fs24  
+\fs26 certs-vol
+\fs24 \
+        
+\fs26 secret:
+\fs24 \
+          
+\fs26 secretName:
+\fs24  
+\fs26 certs-secret
+\fs24 \
+\pard\pardeftab560\slleading20\partightenfactor0
+
+\f0\fs26 \cf0 \kerning1\expnd0\expndtw0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 \
+\
+\
+10- create a clone name xxx out of a same created PVC in question 9 but the size should be 2Gi and ceph sc is ceph.fs.\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0       - from web ui \
+     - edit the pvc and change the size to 2 Gi\
+\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf0 Answer: \
+- From web-ui\
+- As per the question number 9 (you already created a PVC with 500Mi), create a PVC Clone using above PVC (as per the question 9)\
+- Storage > PVC > choose/Select the PVC > ( \'85) three Dots > clone:\
+    Name:\
+    Access Mode:\
+   Size : 2 Gi\
+   Storage Class: Ceph FS \
+\
+- Attach the pvc to application \
+- oc set volume deployment/deployment-name --add --name=v1 -m /path-name --overwrite\
+- oc edit deployment / name\
+\
+\pard\pardeftab720\partightenfactor0
+
+\f8 \cf10 \cb7 \expnd0\expndtw0\kerning0
+  volumes:\
+    - name: volume-name\
+      persistentVolumeClaim:\
+        claimName: pvc name
+\f0 \cf0 \cb1 \kerning1\expnd0\expndtw0 \
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+\cf0 \
+}

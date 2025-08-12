@@ -48,10 +48,11 @@ export const playbooksAPI = {
 // Playbook Files API
 export const playbookFilesAPI = {
   getAll: (playbookId) => api.get(`/playbooks/${playbookId}/files`),
-  upload: (playbookId, formData) => api.post(`/playbooks/${playbookId}/files`, formData, {
+  upload: (playbookId, formData, config = {}) => api.post(`/playbooks/${playbookId}/files`, formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    ...config,
   }),
   delete: (playbookId, fileId) => api.delete(`/playbooks/${playbookId}/files/${fileId}`),
   download: (playbookId, fileId) => api.get(`/playbooks/${playbookId}/files/${fileId}/download`, {
