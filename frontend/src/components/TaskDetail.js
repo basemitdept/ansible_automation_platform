@@ -39,24 +39,29 @@ const TaskDetail = () => {
   const [redirecting, setRedirecting] = useState(false);
   const [redirectCountdown, setRedirectCountdown] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
+  const [tailIndex, setTailIndex] = useState(0);
+  const tailIntervalRef = useRef(null);
   const outputRef = useRef(null);
   const redirectTimeoutRef = useRef(null);
   const countdownIntervalRef = useRef(null);
 
   useEffect(() => {
-    console.log('🔴 TASKDETAIL: useEffect triggered for task:', taskId);
-    
     fetchTask();
     
     // Connect to WebSocket for real-time updates
-    console.log('TaskDetail: Connecting to WebSocket for task:', taskId);
+    console.log('🔴 TASKDETAIL: About to call socketService.connect()');
     socketService.connect();
+    console.log('🔴 TASKDETAIL: socketService.connect() called');
+    
+    // Check connection status after a delay
+    setTimeout(() => {
+      console.log('🔴 TASKDETAIL: Socket connected after 2s:', socketService.socket?.connected);
+      console.log('🔴 TASKDETAIL: Socket object:', socketService.socket);
+    }, 2000);
     
     // Monitor WebSocket connection status
     const checkWebSocketConnection = () => {
-      const isConnected = socketService.socket?.connected || false;
-      console.log('TaskDetail: WebSocket connected:', isConnected);
-      setWsConnected(isConnected);
+      setWsConnected(socketService.socket?.connected || false);
     };
     
     // Check connection status immediately and periodically
@@ -65,15 +70,12 @@ const TaskDetail = () => {
     
     const handleTaskUpdate = (data) => {
       if (data.task_id === taskId) {
-        console.log('TaskDetail: Received WebSocket task update:', data);
         setTask(prevTask => {
-          console.log('TaskDetail: Previous task status:', prevTask?.status, 'New status:', data.status);
           const newTask = { ...prevTask, status: data.status };
           
           // Check if task just completed and trigger redirect
           if (prevTask && prevTask.status !== data.status && 
               (data.status === 'completed' || data.status === 'failed' || data.status === 'partial')) {
-            console.log('TaskDetail: WebSocket - Task completed, triggering redirect for status:', data.status);
             // Add a small delay to ensure user can see the completion
             setTimeout(() => {
               handleTaskCompletion(data.status);
@@ -82,26 +84,15 @@ const TaskDetail = () => {
           
           return newTask;
         });
-      } else {
-        console.log('TaskDetail: Ignoring WebSocket update for different task:', data.task_id, 'vs', taskId);
       }
     };
 
     const handleTaskOutput = (data) => {
-      console.log('🔴 FRONTEND: Received task_output:', data);
-      console.log('🔴 FRONTEND: Current taskId:', taskId);
-      console.log('🔴 FRONTEND: Message task_id:', data.task_id);
-      console.log('🔴 FRONTEND: IDs match:', data.task_id === taskId);
-      
-      // Show ALL messages regardless of task ID + show empty lines too
-      const displayText = (data.output !== undefined) ? (data.output.trim() || '[EMPTY]') : '[UNDEFINED]';
-      console.log('🔴 FRONTEND DEBUG: Adding ANY task output:', displayText);
-      console.log('🔴 FRONTEND DEBUG: Current output length before add:', output.length);
-      
+      console.log('🔴 TASKDETAIL: handleTaskOutput called with:', data);
+      // ACCEPT ALL MESSAGES, IGNORE TASK ID FOR NOW
       setOutput(prevOutput => {
-        const newOutput = [...prevOutput, `[${data.task_id.substr(0,8)}] ${displayText}`];
-        console.log('🔴 FRONTEND DEBUG: New output length after add:', newOutput.length);
-        // Keep only last 200 lines to prevent memory issues
+        const newOutput = [...prevOutput, `[${data.task_id || 'unknown'}] ${data.output || 'NO OUTPUT'}`];
+        console.log('🔴 TASKDETAIL: Added output, new total lines:', newOutput.length);
         return newOutput.slice(-200);
       });
         
@@ -113,42 +104,121 @@ const TaskDetail = () => {
       }, 10);
     };
 
-    console.log('🔴 FRONTEND: Setting up WebSocket listeners for task:', taskId);
-    console.log('🔴 FRONTEND: socketService object:', socketService);
-    console.log('🔴 FRONTEND: socketService.on function:', socketService.on);
+    console.log('🔴 DEBUG: Setting up socket listeners for task:', taskId);
+
+    // Remove noisy test listener
     
     socketService.on('task_update', handleTaskUpdate);
     socketService.on('task_output', handleTaskOutput);
+    console.log('🔴 DEBUG: Listeners registered. Total task_output listeners:', socketService.listeners.get('task_output')?.length || 0);
     
-    console.log('🔴 FRONTEND: WebSocket listeners setup complete');
-    console.log('🔴 FRONTEND: Registered listeners:', socketService.listeners);
-    
-    // Test if listeners are working by manually emitting a test
-    setTimeout(() => {
-      console.log('🔴 FRONTEND: Testing listener setup...');
-      if (socketService.listeners && socketService.listeners.has('task_output')) {
-        console.log('🔴 FRONTEND: task_output listeners count:', socketService.listeners.get('task_output').length);
+    // Also bind directly to the underlying socket.io instance
+    const bindNativeSocketListeners = () => {
+      const sock = socketService.socket;
+      if (!sock) return;
+      try {
+        sock.off('task_output');
+        sock.off('task_update');
+        sock.on('task_output', handleTaskOutput);
+        sock.on('task_update', handleTaskUpdate);
+        // Catch-all for debugging
+        if (sock.onAny) {
+          sock.onAny((event, ...args) => {
+            if (event === 'task_output') return; // reduce noise
+            console.log('🔴 SOCKET onAny:', event, args);
+          });
+        }
+        console.log('🔴 DEBUG: Native socket listeners bound');
+      } catch (e) {
+        console.warn('Failed to bind native socket listeners', e);
       }
+    };
+
+    // Bind immediately if socket exists
+    bindNativeSocketListeners();
+    // Also bind on connect events
+    if (socketService.socket) {
+      socketService.socket.on('connect', () => {
+        console.log('🔴 DEBUG: Socket connected event, rebinding listeners and joining task');
+        bindNativeSocketListeners();
+        try {
+          socketService.socket.emit('join_task', { task_id: taskId });
+        } catch (e) {}
+      });
+    }
+
+    // Test if we can emit to ourselves
+    setTimeout(() => {
+      console.log('🔴 SELF TEST: Emitting test event to ourselves');
+      socketService.emit('test_event', { message: 'Self test works!' });
     }, 1000);
 
+    // Ask server to join a room for this task to ensure scoped messages
+    const attemptJoinTask = () => {
+      console.log('🔴 FRONTEND: Attempting to join task room. Socket connected:', socketService.socket?.connected);
+      console.log('🔴 FRONTEND: Socket object exists:', !!socketService.socket);
+      
+      if (socketService.socket?.connected) {
+        console.log('🔴 FRONTEND: Emitting join_task for task:', taskId);
+        socketService.socket.emit('join_task', { task_id: taskId });
+        console.log('🔴 FRONTEND: join_task emitted successfully');
+      } else {
+        console.log('🔴 FRONTEND: Socket not connected, will retry in 500ms');
+        setTimeout(attemptJoinTask, 500);
+      }
+    };
+    
+    try {
+      attemptJoinTask();
+    } catch (e) {
+      console.error('🔴 FRONTEND: Failed to emit join_task:', e);
+    }
+    
     // DISABLED: Aggressive polling was clearing live output too quickly
     // Let WebSocket handle status updates instead
-    console.log('🔴 TASKDETAIL: Aggressive polling DISABLED to allow live output viewing');
     const completionCheckInterval = null;
     
+    // Fallback tail polling every 1s to ensure output appears even if WS fails
+    const startTailPolling = () => {
+      if (tailIntervalRef.current) return;
+      tailIntervalRef.current = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/tasks/${taskId}/tail?since=${tailIndex}`, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.lines) && data.lines.length > 0) {
+              setOutput(prev => {
+                const merged = prev.concat(data.lines);
+                return merged.slice(-200);
+              });
+              setTailIndex(data.next || (tailIndex + data.lines.length));
+              // Scroll down
+              setTimeout(() => {
+                if (outputRef.current) {
+                  outputRef.current.scrollTop = outputRef.current.scrollHeight;
+                }
+              }, 10);
+            }
+          }
+        } catch (e) {}
+      }, 1000);
+    };
+
+    startTailPolling();
+
     // Slower polling for task completion - check every 10 seconds only
     const slowCompletionCheckInterval = setInterval(async () => {
       if (!redirecting) {
         try {
-          console.log('TaskDetail: Slow polling check...');
           const response = await tasksAPI.getById(taskId);
           const currentStatus = response.data.status;
           
-          console.log('TaskDetail: Polled status:', currentStatus, 'Current task status:', task?.status);
-          
           // Check if task completed and trigger redirect if not already redirecting
           if (currentStatus === 'completed' || currentStatus === 'failed' || currentStatus === 'partial') {
-            console.log('TaskDetail: Task completed via polling, current status:', currentStatus);
             setTask(prevTask => {
               const updatedTask = {
                 ...prevTask,
@@ -159,7 +229,6 @@ const TaskDetail = () => {
               
               // Trigger redirect if status changed to completed
               if (prevTask && prevTask.status !== currentStatus) {
-                console.log('TaskDetail: Status changed from', prevTask.status, 'to', currentStatus, '- triggering redirect');
                 handleTaskCompletion(currentStatus);
               }
               
@@ -175,9 +244,25 @@ const TaskDetail = () => {
     return () => {
       socketService.off('task_update', handleTaskUpdate);
       socketService.off('task_output', handleTaskOutput);
+      try {
+        const sock = socketService.socket;
+        if (sock) {
+          sock.off('task_output', handleTaskOutput);
+          sock.off('task_update', handleTaskUpdate);
+        }
+      } catch (e) {}
+      try {
+        if (socketService.socket?.connected) {
+          socketService.socket.emit('leave_task', { task_id: taskId });
+        }
+      } catch (e) {}
       if (completionCheckInterval) clearInterval(completionCheckInterval);
       clearInterval(slowCompletionCheckInterval);
       clearInterval(wsCheckInterval);
+      if (tailIntervalRef.current) {
+        clearInterval(tailIntervalRef.current);
+        tailIntervalRef.current = null;
+      }
       clearTimeout(redirectTimeoutRef.current);
       clearInterval(countdownIntervalRef.current);
     };
@@ -190,7 +275,6 @@ const TaskDetail = () => {
       setTask(response.data);
       
       // DISABLED: Don't load static output - use live WebSocket output only
-      console.log('🔴 TASKDETAIL: Skipping static output load, using live WebSocket only');
       // if (response.data.output && output.length === 0) {
       //   setOutput(response.data.output.split('\n').filter(line => line.trim()));
       // }
@@ -199,7 +283,6 @@ const TaskDetail = () => {
       if (response.data.status === 'completed' || 
           response.data.status === 'failed' || 
           response.data.status === 'partial') {
-        console.log('TaskDetail: Task is already completed on load, status:', response.data.status);
         // Trigger immediately for already completed tasks
         handleTaskCompletion(response.data.status);
       }

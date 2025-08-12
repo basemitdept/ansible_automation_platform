@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, join_room, leave_room
+from threading import Lock
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, verify_jwt_in_request
 from sqlalchemy import text
 from models import db, User, Playbook, Host, HostGroup, Task, ExecutionHistory, Artifact, Credential, Webhook, ApiToken, PlaybookFile, Variable
@@ -29,7 +30,56 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 db.init_app(app)
 jwt = JWTManager(app)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
+# Configure Socket.IO to work behind nginx proxy and on same-origin
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode='eventlet',
+    ping_interval=25,
+    ping_timeout=30,
+    logger=True,
+    engineio_logger=True
+)
+
+# In-memory tail buffers for task outputs as a fallback to WebSockets
+TASK_OUTPUT_TAILS = {}
+TASK_OUTPUT_LOCK = Lock()
+
+# Optional: handle room joins to scope output per-task
+@socketio.on('join_task')
+def on_join_task(data):
+    try:
+        task_id = str(data.get('task_id'))
+        join_room(task_id)
+        print(f"Client joined room for task {task_id}")
+        
+    except Exception as e:
+        print(f"join_task error: {e}")
+
+@socketio.on('leave_task')
+def on_leave_task(data):
+    try:
+        task_id = str(data.get('task_id'))
+        leave_room(task_id)
+    except Exception as e:
+        print(f"leave_task error: {e}")
+
+@app.route('/api/tasks/<task_id>/tail', methods=['GET'])
+def get_task_tail(task_id):
+    try:
+        since = request.args.get('since', default=0, type=int)
+        with TASK_OUTPUT_LOCK:
+            buffer = TASK_OUTPUT_TAILS.get(str(task_id), [])
+            total = len(buffer)
+            if since < 0 or since > total:
+                since = 0
+            lines = buffer[since:]
+            return jsonify({
+                'lines': lines,
+                'next': total
+            })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # WebSocket event handlers
 @socketio.on('connect')
@@ -4925,14 +4975,27 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                     'task_id': str(task_id),
                     'output': line
                 }
-                print(f"🔴 WEBSOCKET DEBUG: About to emit task_output for task {task_id}")
-                print(f"🔴 WEBSOCKET DEBUG: Data = {websocket_data}")
                 try:
-                    socketio.emit('task_output', websocket_data)
-                    print(f"🔴 WEBSOCKET DEBUG: Successfully emitted task_output")
+                    # SIMPLE BROADCAST TO ALL - NO ROOMS
+                    print(f"🔴 SIMPLE: Broadcasting line for task {task_id}: {line[:50]}...")
+                    socketio.emit('task_output', websocket_data, broadcast=True)
+                    print(f"🔴 SIMPLE: Broadcast successful")
                 except Exception as e:
-                    print(f"🔴 WEBSOCKET ERROR: Failed to emit task_output: {e}")
-                print(f"Emitted line to WebSocket: {line[:50]}...")  # Debug log
+                    print(f"🔴 SIMPLE ERROR: {e}")
+                
+                # Always append to in-memory tail buffer as fallback
+                try:
+                    with TASK_OUTPUT_LOCK:
+                        lst = TASK_OUTPUT_TAILS.get(str(task_id))
+                        if lst is None:
+                            lst = []
+                            TASK_OUTPUT_TAILS[str(task_id)] = lst
+                        lst.append(line)
+                        # Keep only last 1000 lines
+                        if len(lst) > 1000:
+                            del lst[:-1000]
+                except Exception as e:
+                    print(f"TAIL BUFFER ERROR: {e}")
                 
                 # Force flush to ensure real-time delivery
                 sys.stdout.flush()
@@ -4945,6 +5008,10 @@ def run_ansible_playbook_multi_host(task_id, playbook, hosts, username, password
                         'task_id': str(task_id),
                         'output': status_update
                     })
+                    socketio.emit('task_output', {
+                        'task_id': str(task_id),
+                        'output': status_update
+                    }, room=str(task_id))
         
         print(f"Finished reading output for task {task_id}. Total lines: {line_count}")
         

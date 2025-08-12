@@ -446,7 +446,15 @@ const History = () => {
       title: 'Playbook',
       dataIndex: ['playbook', 'name'],
       key: 'playbook',
-      render: (text) => <strong>{text}</strong>,
+      width: 240,
+      ellipsis: true,
+      render: (text) => (
+        <Tooltip title={text} placement="topLeft">
+          <strong style={{ display: 'inline-block', maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {text}
+          </strong>
+        </Tooltip>
+      ),
     },
     {
       title: 'Hosts',
@@ -482,7 +490,7 @@ const History = () => {
           </div>
         );
       },
-      width: 200,
+      width: 320,
     },
     {
       title: 'Status',

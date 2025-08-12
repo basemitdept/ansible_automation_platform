@@ -1,11 +1,8 @@
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = process.env.NODE_ENV === 'production' ? '/' : 'http://localhost:5003';
-
-console.log('🔴 SOCKET DEBUG: Environment:', process.env.NODE_ENV);
-console.log('🔴 SOCKET DEBUG: WebSocket URL:', SOCKET_URL);
-console.log('🔴 SOCKET DEBUG: Socket.IO available:', typeof io);
-console.log('🔴 SOCKET DEBUG: Socket.IO function:', io);
+// Always use same-origin WebSocket endpoint so it works behind reverse proxies/nginx and in Docker
+// This avoids pointing to the browser's localhost when the app is hosted remotely
+const SOCKET_URL = `${window.location.protocol}//${window.location.host}`;
 
 class SocketService {
   constructor() {
@@ -15,51 +12,58 @@ class SocketService {
 
   connect() {
     if (this.socket?.connected) {
-      console.log('🔴 FRONTEND: Socket already connected');
+      console.log('🔴 SOCKET: Already connected, skipping');
       return;
     }
 
-    console.log('🔴 FRONTEND: Attempting to connect to:', SOCKET_URL);
-    console.log('🔴 FRONTEND: Creating new socket connection...');
-    
-    this.socket = io(SOCKET_URL, {
+    console.log('🔴 SOCKET: Creating new socket connection to:', SOCKET_URL);
+    console.log('🔴 SOCKET: Socket.io options:', {
+      path: '/socket.io',
       transports: ['websocket', 'polling'],
-      timeout: 10000,
-      forceNew: true
+      timeout: 15000,
+      forceNew: true,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000
     });
     
-    console.log('🔴 FRONTEND: Socket object created:', this.socket);
-
+    this.socket = io(SOCKET_URL, {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      timeout: 15000,
+      forceNew: true,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000
+    });
+    
+    console.log('🔴 SOCKET: Socket object created:', this.socket);
+    
     this.socket.on('connect', () => {
-      console.log('🔴 FRONTEND: Connected to WebSocket server');
-      console.log('🔴 FRONTEND: Socket ID:', this.socket.id);
+      console.log('Connected to WebSocket server');
+      console.log('Socket ID:', this.socket.id);
     });
 
     this.socket.on('disconnect', () => {
-      console.log('🔴 FRONTEND: Disconnected from WebSocket server');
+      console.log('Disconnected from WebSocket server');
     });
 
     this.socket.on('connect_error', (error) => {
-      console.error('🔴 FRONTEND: Connection error:', error);
+      console.error('Connection error:', error);
     });
 
     this.socket.on('error', (error) => {
-      console.error('🔴 FRONTEND: Socket error:', error);
+      console.error('Socket error:', error);
     });
 
     this.socket.on('task_update', (data) => {
-      console.log('🔴 FRONTEND: Received task_update:', data);
       this.emit('task_update', data);
     });
 
     this.socket.on('task_output', (data) => {
-      console.log('🔴 FRONTEND: Received task_output:', data);
-      console.log('🔴 FRONTEND: About to emit to listeners...');
-      
-      // Removed alert - confirmed messages not reaching frontend
-      
+      console.log('🔴 SOCKET: Received task_output from server:', data);
       this.emit('task_output', data);
-      console.log('🔴 FRONTEND: Emitted task_output to listeners');
+      console.log('🔴 SOCKET: Emitted to', this.listeners.get('task_output')?.length || 0, 'listeners');
     });
   }
 
