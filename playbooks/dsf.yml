@@ -4,6 +4,6 @@
   become: yes
   tasks:
     - name: Update system packages
-      command: sleep 30
+      command: sleep 15
       async: 30
       poll: 3

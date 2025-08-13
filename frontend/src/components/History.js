@@ -66,6 +66,9 @@ const History = () => {
   const intervalRef = useRef(null);
   const isPageVisible = useRef(true);
   
+  // Cache for full execution details (only load when needed)
+  const [executionDetailsCache, setExecutionDetailsCache] = useState(new Map());
+  
   // Rerun functionality state
   const [rerunModalVisible, setRerunModalVisible] = useState(false);
   const [selectedRerunExecution, setSelectedRerunExecution] = useState(null);
@@ -125,7 +128,7 @@ const History = () => {
       if (isPageVisible.current && !loading) {
         fetchHistory(); // Background auto-refresh, no loading spinner
       }
-    }, 10000); // Refresh every 10 seconds for history
+    }, 30000); // Refresh every 30 seconds for better performance
   };
 
   const stopAutoRefresh = () => {
@@ -141,7 +144,7 @@ const History = () => {
 
   const fetchHistoryWithInfiniteScroll = async (isManualRefresh = false, reset = false) => {
     const pageToLoad = reset ? 1 : currentPage;
-    const recordsPerPage = 20;
+    const recordsPerPage = 25; // Increased to show more records per page
     
     // Show appropriate loading state
     if (isManualRefresh || reset) {
@@ -151,7 +154,8 @@ const History = () => {
     }
 
     try {
-      const response = await historyAPI.getPaginated(pageToLoad, recordsPerPage);
+      // Use light=true for faster loading with smaller payloads
+      const response = await historyAPI.getPaginatedLight(pageToLoad, recordsPerPage);
       const historyData = response.data.data || response.data;
       const pagination = response.data.pagination || {};
       
@@ -171,7 +175,7 @@ const History = () => {
       setHasMore(pagination.has_next !== false && historyData.length === recordsPerPage);
       setLastRefresh(new Date());
       
-      console.log(`📊 History loaded: ${historyData.length} records (page ${pageToLoad}, total: ${history.length + historyData.length})`);
+      console.log(`⚡ History loaded: ${historyData.length} records (page ${pageToLoad}, total: ${history.length + historyData.length}) - LIGHT MODE`);
     } catch (error) {
       console.error('Failed to fetch execution history', error);
       message.error('Failed to fetch execution history');
@@ -192,11 +196,11 @@ const History = () => {
     const nextPage = currentPage + 1;
     setCurrentPage(nextPage);
     
-    const recordsPerPage = 20;
+    const recordsPerPage = 25; // Match the initial load size
     setLoadingMore(true);
 
     try {
-      const response = await historyAPI.getPaginated(nextPage, recordsPerPage);
+      const response = await historyAPI.getPaginatedLight(nextPage, recordsPerPage);
       const historyData = response.data.data || response.data;
       const pagination = response.data.pagination || {};
       
@@ -219,15 +223,19 @@ const History = () => {
 
   const handleSearch = (value) => {
     setSearchText(value);
-    if (!value) {
-      setFilteredHistory(history);
-    } else {
-      const filtered = history.filter(execution => {
-        const searchValue = value.toLowerCase();
-        
-        // Search in basic fields
-        if ((execution.playbook_name && execution.playbook_name.toLowerCase().includes(searchValue)) ||
-            (execution.status && execution.status.toLowerCase().includes(searchValue)) ||
+    
+    // Debounce the actual filtering for better performance
+    clearTimeout(window.searchTimeout);
+    window.searchTimeout = setTimeout(() => {
+      if (!value) {
+        setFilteredHistory(history);
+      } else {
+        const filtered = history.filter(execution => {
+          const searchValue = value.toLowerCase();
+          
+          // Search in basic fields
+          if ((execution.playbook_name && execution.playbook_name.toLowerCase().includes(searchValue)) ||
+              (execution.status && execution.status.toLowerCase().includes(searchValue)) ||
             (execution.executed_by && execution.executed_by.toLowerCase().includes(searchValue)) ||
             (execution.execution_id && execution.execution_id.toLowerCase().includes(searchValue)) ||
             (execution.serial_id && execution.serial_id.toString().includes(searchValue))) {
@@ -269,9 +277,10 @@ const History = () => {
         const dateA = new Date(a.started_at || a.created_at);
         const dateB = new Date(b.started_at || b.created_at);
         return dateB - dateA;
-      });
-      setFilteredHistory(sortedFiltered);
-    }
+        });
+        setFilteredHistory(sortedFiltered);
+      }
+    }, 300); // 300ms debounce delay
   };
 
   const getStatusIcon = (status) => {
@@ -314,8 +323,29 @@ const History = () => {
   };
 
   const showOutput = async (execution) => {
-    setSelectedExecution(execution);
     setOutputModalVisible(true);
+    
+    // Check if we have full execution details (output fields) from cache
+    let fullExecution = execution;
+    if (executionDetailsCache.has(execution.id)) {
+      fullExecution = executionDetailsCache.get(execution.id);
+      setSelectedExecution(fullExecution);
+    } else if (!execution.output && !execution.error_output) {
+      // Light mode data - need to fetch full execution details
+      console.log('📦 Fetching full execution details for output:', execution.id);
+      try {
+        const response = await historyAPI.getById(execution.id);
+        fullExecution = response.data;
+        // Cache for future use
+        executionDetailsCache.set(execution.id, fullExecution);
+        setExecutionDetailsCache(new Map(executionDetailsCache));
+      } catch (error) {
+        console.error('Failed to fetch full execution details:', error);
+        message.error('Failed to load execution output');
+      }
+    }
+    
+    setSelectedExecution(fullExecution);
     
     // Fetch artifacts for this execution
     setArtifactsLoading(true);
@@ -514,13 +544,13 @@ const History = () => {
           #{serial_id || 'N/A'}
         </Tag>
       ),
-      width: 80,
+      width: 60,
     },
     {
       title: 'Playbook',
       dataIndex: ['playbook', 'name'],
       key: 'playbook',
-      width: 240,
+      width: 160,
       ellipsis: true,
       render: (text) => (
         <Tooltip title={text} placement="topLeft">
@@ -564,14 +594,14 @@ const History = () => {
           </div>
         );
       },
-      width: 320,
+      width: 200,
     },
     {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
       render: (status) => getStatusTag(status),
-      width: 120,
+      width: 90,
       filters: [
         { text: 'Completed', value: 'completed' },
         { text: 'Partial Success', value: 'partial' },
@@ -597,7 +627,7 @@ const History = () => {
           </Space>
         );
       },
-      width: 120,
+      width: 90,
     },
     {
       title: 'Started',
@@ -608,7 +638,7 @@ const History = () => {
         const momentDate = moment(date);
         return momentDate.isValid() ? momentDate.format('MMM DD, YYYY HH:mm:ss') : '-';
       },
-      width: 180,
+      width: 130,
       sorter: (a, b) => moment(a.started_at).unix() - moment(b.started_at).unix(),
       defaultSortOrder: 'descend',
     },
@@ -629,29 +659,27 @@ const History = () => {
         }
         return `${Math.floor(duration.asMinutes())}m ${Math.floor(duration.asSeconds() % 60)}s`;
       },
-      width: 100,
+      width: 80,
     },
     {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
-        <Space>
+        <Space size="small">
           <Button
             type="text"
             icon={<RedoOutlined />}
             onClick={() => handleRerun(record)}
             title="Rerun this task"
-          >
-            Rerun
-          </Button>
+            size="small"
+          />
           <Button
             type="text"
             icon={<EyeOutlined />}
             onClick={() => showOutput(record)}
             title="View Output"
-          >
-            Output
-          </Button>
+            size="small"
+          />
           <Popconfirm
             title="Delete this execution history?"
             description="This action cannot be undone."
@@ -665,11 +693,13 @@ const History = () => {
               icon={<DeleteOutlined />}
               danger
               title="Delete"
+              size="small"
             />
           </Popconfirm>
         </Space>
       ),
-      width: 200,
+      width: 120,
+      fixed: 'right',
     },
   ];
 
@@ -701,24 +731,30 @@ const History = () => {
           </Space>
         }
         className="card-container"
+        style={{ width: '100%', overflow: 'auto' }}
       >
-        <div
-          style={{ maxHeight: '600px', overflowY: 'auto' }}
-          onScroll={(e) => {
-            const { scrollTop, scrollHeight, clientHeight } = e.target;
-            // Load more when user scrolls to within 100px of bottom
-            if (scrollHeight - scrollTop - clientHeight < 100 && hasMore && !loadingMore) {
-              loadMoreRecords();
-            }
-          }}
-        >
+        <div>
           <Table
             columns={columns}
             dataSource={filteredHistory}
             rowKey="id"
             loading={loading}
             pagination={false}
-            scroll={{ x: true }}
+            scroll={{ 
+              x: 'max-content', 
+              y: 'calc(100vh - 250px)',
+              scrollToFirstRowOnChange: false
+            }}
+            size="small"
+            showSorterTooltip={false}
+            onScroll={(e) => {
+              const { scrollTop, scrollHeight, clientHeight } = e.target;
+              // Load more when user scrolls to within 200px of bottom
+              if (scrollHeight - scrollTop - clientHeight < 200 && hasMore && !loadingMore) {
+                console.log('🔄 Loading more records...', { scrollTop, scrollHeight, clientHeight });
+                loadMoreRecords();
+              }
+            }}
           />
           {loadingMore && (
             <div style={{ textAlign: 'center', padding: '20px' }}>

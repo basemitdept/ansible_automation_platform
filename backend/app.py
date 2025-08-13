@@ -2164,6 +2164,30 @@ def get_history_stats():
         print(f"Error getting history stats: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/history/<history_id>', methods=['GET'])
+def get_history_by_id(history_id):
+    """Get single execution history with full details (including output)"""
+    try:
+        from sqlalchemy.orm import joinedload
+        
+        history = ExecutionHistory.query\
+            .options(
+                joinedload(ExecutionHistory.playbook),
+                joinedload(ExecutionHistory.host),
+                joinedload(ExecutionHistory.user)
+            )\
+            .filter_by(id=history_id)\
+            .first()
+        
+        if not history:
+            return jsonify({'error': 'Execution history not found'}), 404
+        
+        # Return full execution details (not light mode)
+        return jsonify(history.to_dict())
+    except Exception as e:
+        print(f"Error getting history by ID: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/history/<history_id>', methods=['DELETE'])
 def delete_history(history_id):
     try:

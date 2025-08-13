@@ -107,6 +107,14 @@ export const historyAPI = {
   getPaginated: (page = 1, perPage = 25) => {
     return api.get(`/history?page=${page}&per_page=${perPage}`);
   },
+  getPaginatedLight: (page = 1, perPage = 10) => {
+    // Lightweight paginated version for history page - faster loading
+    return api.get(`/history?light=true&page=${page}&per_page=${perPage}`);
+  },
+  getById: (id) => {
+    // Get single execution with full details (including output)
+    return api.get(`/history/${id}`);
+  },
   delete: (id) => api.delete(`/history/${id}`),
 };
 
