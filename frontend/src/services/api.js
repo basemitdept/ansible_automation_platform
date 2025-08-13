@@ -88,7 +88,25 @@ export const tasksAPI = {
 
 // History API
 export const historyAPI = {
-  getAll: () => api.get('/history'),
+  getAll: (params = {}) => {
+    // Default to getting all records (no pagination) for better user experience
+    const queryParams = new URLSearchParams({
+      per_page: 0, // 0 means return all records
+      ...params
+    });
+    return api.get(`/history?${queryParams}`);
+  },
+  getLight: (limit = 50) => {
+    // Lightweight version for dashboard - gets recent records without heavy output data
+    return api.get(`/history?light=true&per_page=${limit}`);
+  },
+  getStats: () => {
+    // Get only statistics (counts) for dashboard without heavy data
+    return api.get('/history/stats');
+  },
+  getPaginated: (page = 1, perPage = 25) => {
+    return api.get(`/history?page=${page}&per_page=${perPage}`);
+  },
   delete: (id) => api.delete(`/history/${id}`),
 };
 

@@ -58,13 +58,17 @@ const Dashboard = () => {
       setLoading(true);
     }
     try {
-      const [tasksRes, historyRes, hostsRes, groupsRes, playbooksRes, usersRes] = await Promise.all([
+      const [tasksRes, historyStatsRes, historyRecentRes, hostsRes, groupsRes, playbooksRes, usersRes] = await Promise.all([
         tasksAPI.getAll().catch((err) => {
           console.error('Failed to fetch tasks:', err);
           return { data: [] };
         }),
-        historyAPI.getAll().catch((err) => {
-          console.error('Failed to fetch history:', err);
+        historyAPI.getStats().catch((err) => {  // Get statistics for accurate counts
+          console.error('Failed to fetch history stats:', err);
+          return { data: { total: 0, by_status: {} } };
+        }),
+        historyAPI.getLight(10).catch((err) => {  // Get recent records for activity display
+          console.error('Failed to fetch recent history:', err);
           return { data: [] };
         }),
         hostsAPI.getAll().catch((err) => {
@@ -86,15 +90,15 @@ const Dashboard = () => {
       ]);
 
       const tasks = tasksRes.data || [];
-      // Handle new paginated API response format for history
-      const history = historyRes.data.data || historyRes.data || [];
+      const historyStats = historyStatsRes.data || { total: 0, by_status: {} };
+      // Handle new paginated API response format for recent history
+      const recentHistory = historyRecentRes.data.data || historyRecentRes.data || [];
       const hosts = hostsRes.data || [];
       const hostGroups = groupsRes.data || [];
       const playbooks = playbooksRes.data || [];
       const users = usersRes.data || [];
 
-      // Calculate task statistics
-      // Task and history data loaded
+      // Calculate task statistics using accurate counts
       
       // Count active tasks (running/pending)
       const activeTasks = {
@@ -102,27 +106,27 @@ const Dashboard = () => {
         pending: tasks.filter(t => t.status === 'pending').length
       };
       
-      // Count completed/failed from history (since completed tasks move to history)
-      const historyStats = {
-        completed: history.filter(h => 
-          h.status === 'completed' || 
-          h.status === 'success' || 
-          h.status === 'finished' ||
-          h.status === 'done'
-        ).length,
-        failed: history.filter(h => 
-          h.status === 'failed' || 
-          h.status === 'error' ||
-          h.status === 'cancelled'
-        ).length
-      };
+      // Use accurate history statistics from stats API
+      const completed = (historyStats.by_status.completed || 0) + 
+                       (historyStats.by_status.success || 0) + 
+                       (historyStats.by_status.finished || 0) +
+                       (historyStats.by_status.done || 0);
+      
+      const failed = (historyStats.by_status.failed || 0) + 
+                     (historyStats.by_status.error || 0) +
+                     (historyStats.by_status.cancelled || 0);
+      
+      const partial = historyStats.by_status.partial || 0;
+      const terminated = historyStats.by_status.terminated || 0;
       
       const taskStats = {
-        total: tasks.length + history.length,
+        total: tasks.length + historyStats.total,
         running: activeTasks.running,
         pending: activeTasks.pending,
-        completed: historyStats.completed,
-        failed: historyStats.failed
+        completed: completed,
+        failed: failed,
+        partial: partial,
+        terminated: terminated
       };
 
       // Calculate host statistics
@@ -137,13 +141,13 @@ const Dashboard = () => {
         .sort((a, b) => new Date(b.started_at || b.created_at) - new Date(a.started_at || a.created_at))
         .slice(0, 10);
 
-      const recentHistory = history
-        .sort((a, b) => new Date(b.started_at) - new Date(a.started_at))
-        .slice(0, 10);
+      // recentHistory is already sorted and limited from the API
+      const recentHistoryForDisplay = recentHistory.slice(0, 8);
 
       console.log('📊 Dashboard data fetched:', {
         tasks: tasks.length,
-        history: history.length,
+        historyTotal: historyStats.total,
+        historyRecent: recentHistory.length,
         hosts: hosts.length,
         hostGroups: hostGroups.length,
         playbooks: playbooks.length,
@@ -157,7 +161,7 @@ const Dashboard = () => {
         playbooks: { total: playbooks.length },
         users: { total: users.length },
         recentTasks,
-        recentHistory
+        recentHistory: recentHistoryForDisplay
       });
       setLastRefresh(new Date());
       console.log('✅ Dashboard data updated successfully');
@@ -186,7 +190,7 @@ const Dashboard = () => {
         console.log('⏰ Dashboard auto-refresh triggered');
         fetchDashboardData();
       }
-    }, 10000); // Refresh every 10 seconds for testing (was 30000)
+    }, 30000); // Refresh every 30 seconds for better performance
   }, [fetchDashboardData]);
 
   const stopAutoRefresh = useCallback(() => {
@@ -305,7 +309,7 @@ const Dashboard = () => {
   ];
 
   const successRate = stats.tasks.total > 0 
-    ? Math.round((stats.tasks.completed / stats.tasks.total) * 100) 
+    ? Math.round((stats.tasks.completed / (stats.tasks.completed + stats.tasks.failed + stats.tasks.partial + stats.tasks.terminated)) * 100) 
     : 0;
 
   if (loading) {
@@ -426,6 +430,23 @@ const Dashboard = () => {
                   title="Running"
                   value={stats.tasks.running}
                   valueStyle={{ color: '#1890ff' }}
+                />
+              </Col>
+            </Row>
+            <Divider />
+            <Row gutter={16}>
+              <Col span={12}>
+                <Statistic
+                  title="Partial"
+                  value={stats.tasks.partial}
+                  valueStyle={{ color: '#fa8c16' }}
+                />
+              </Col>
+              <Col span={12}>
+                <Statistic
+                  title="Terminated"
+                  value={stats.tasks.terminated}
+                  valueStyle={{ color: '#722ed1' }}
                 />
               </Col>
             </Row>

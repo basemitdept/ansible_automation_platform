@@ -550,6 +550,62 @@ class ExecutionHistory(db.Model):
         except:
             return 1
     
+    def to_dict_light(self):
+        """Lightweight version for dashboard and quick previews - excludes heavy output data"""
+        # Optimize playbook data extraction
+        playbook_data = None
+        if self.playbook:
+            playbook_data = {
+                'id': str(self.playbook.id),
+                'name': self.playbook.name
+            }
+        
+        # Simplified host data
+        host_data = None
+        if self.host:
+            host_data = {
+                'id': str(self.host.id),
+                'name': self.host.name,
+                'hostname': self.host.hostname
+            }
+        
+        # Simplified user data
+        user_data = {'username': 'unknown', 'name': 'Unknown User'}
+        if self.webhook_id:
+            try:
+                webhook = Webhook.query.get(self.webhook_id)
+                if webhook:
+                    user_data = {
+                        'id': str(self.webhook_id),
+                        'username': webhook.name,
+                        'name': f'Webhook: {webhook.name}'
+                    }
+            except:
+                user_data = {'username': 'webhook', 'name': 'Webhook Trigger'}
+        elif self.user:
+            user_data = {
+                'id': str(self.user.id),
+                'username': self.user.username,
+                'name': self.user.username
+            }
+        
+        # Determine executed_by_type for icon display
+        executed_by_type = 'webhook' if self.webhook_id else 'user'
+
+        return {
+            'id': str(self.id),
+            'serial_id': self.get_global_serial_id(),
+            'playbook_id': str(self.playbook_id),
+            'status': self.status,
+            'started_at': self.started_at.isoformat() + 'Z' if self.started_at else None,
+            'finished_at': self.finished_at.isoformat() + 'Z' if self.finished_at else None,
+            'playbook': playbook_data,
+            'host': host_data,
+            'user': user_data,
+            'executed_by_type': executed_by_type,
+            # Exclude heavy fields: output, error_output, host_list, hosts array
+        }
+
     def to_dict(self):
         import json
         

@@ -19,8 +19,8 @@ import {
   Badge,
   List,
   Avatar,
-  Switch,
-  Tooltip
+  Tooltip,
+  Spin
 } from 'antd';
 import {
   HistoryOutlined,
@@ -50,6 +50,10 @@ const History = () => {
   const [history, setHistory] = useState([]);
   const [filteredHistory, setFilteredHistory] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [totalRecords, setTotalRecords] = useState(0);
   const [outputModalVisible, setOutputModalVisible] = useState(false);
   const [selectedExecution, setSelectedExecution] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
@@ -57,6 +61,8 @@ const History = () => {
   const [searchText, setSearchText] = useState('');
   const autoRefresh = true; // Always auto refresh in background
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [showAllRecords, setShowAllRecords] = useState(false); // Not used anymore, keeping for compatibility
+  const useInfiniteScroll = true; // Always use infinite scroll
   const intervalRef = useRef(null);
   const isPageVisible = useRef(true);
   
@@ -92,6 +98,16 @@ const History = () => {
     };
   }, []);
 
+  // Initial data load
+  useEffect(() => {
+    // Reset state and load initial data
+    setHistory([]);
+    setFilteredHistory([]);
+    setCurrentPage(1);
+    setHasMore(true);
+    fetchHistory(true, true);
+  }, []); // Only run on mount
+
   // Auto-refresh effect
   useEffect(() => {
     if (autoRefresh && isPageVisible.current) {
@@ -119,27 +135,85 @@ const History = () => {
     }
   };
 
-  const fetchHistory = async (isManualRefresh = false) => {
-    // Only show loading spinner for manual refresh, not auto-refresh
-    if (isManualRefresh) {
+  const fetchHistory = async (isManualRefresh = false, reset = false) => {
+    await fetchHistoryWithInfiniteScroll(isManualRefresh, reset);
+  };
+
+  const fetchHistoryWithInfiniteScroll = async (isManualRefresh = false, reset = false) => {
+    const pageToLoad = reset ? 1 : currentPage;
+    const recordsPerPage = 20;
+    
+    // Show appropriate loading state
+    if (isManualRefresh || reset) {
       setLoading(true);
+    } else if (pageToLoad > 1) {
+      setLoadingMore(true);
     }
+
     try {
-      const response = await historyAPI.getAll();
-      // Handle new paginated API response format
-      const historyData = response.data.data || response.data; // Support both new and old format
+      const response = await historyAPI.getPaginated(pageToLoad, recordsPerPage);
+      const historyData = response.data.data || response.data;
+      const pagination = response.data.pagination || {};
       
-      // Data is already sorted by newest first from the API, no need to re-sort
-      setHistory(historyData);
-      setFilteredHistory(historyData);
-      setLastRefresh(new Date());
-    } catch (error) {
-      console.error('Failed to fetch execution history');
-    } finally {
-      // Only clear loading spinner if it was a manual refresh
-      if (isManualRefresh) {
-        setLoading(false);
+      if (reset || pageToLoad === 1) {
+        // First load or reset - replace all data
+        setHistory(historyData);
+        setFilteredHistory(historyData);
+        setCurrentPage(1);
+      } else {
+        // Load more - append to existing data
+        setHistory(prev => [...prev, ...historyData]);
+        setFilteredHistory(prev => [...prev, ...historyData]);
       }
+      
+      // Update pagination state
+      setTotalRecords(pagination.total || historyData.length);
+      setHasMore(pagination.has_next !== false && historyData.length === recordsPerPage);
+      setLastRefresh(new Date());
+      
+      console.log(`📊 History loaded: ${historyData.length} records (page ${pageToLoad}, total: ${history.length + historyData.length})`);
+    } catch (error) {
+      console.error('Failed to fetch execution history', error);
+      message.error('Failed to fetch execution history');
+    } finally {
+      if (isManualRefresh || reset) {
+        setLoading(false);
+      } else {
+        setLoadingMore(false);
+      }
+    }
+  };
+
+
+
+  const loadMoreRecords = async () => {
+    if (loadingMore || !hasMore) return;
+    
+    const nextPage = currentPage + 1;
+    setCurrentPage(nextPage);
+    
+    const recordsPerPage = 20;
+    setLoadingMore(true);
+
+    try {
+      const response = await historyAPI.getPaginated(nextPage, recordsPerPage);
+      const historyData = response.data.data || response.data;
+      const pagination = response.data.pagination || {};
+      
+      // Append to existing data
+      setHistory(prev => [...prev, ...historyData]);
+      setFilteredHistory(prev => [...prev, ...historyData]);
+      
+      // Update pagination state
+      setTotalRecords(pagination.total || totalRecords);
+      setHasMore(pagination.has_next !== false && historyData.length === recordsPerPage);
+      
+      console.log(`📊 Loaded more: ${historyData.length} records (page ${nextPage}, total: ${history.length + historyData.length})`);
+    } catch (error) {
+      console.error('Failed to load more records', error);
+      message.error('Failed to load more records');
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -606,6 +680,9 @@ const History = () => {
           <Space>
             <HistoryOutlined />
             <Title level={4} style={{ margin: 0 }}>Execution History</Title>
+            <Text type="secondary" style={{ fontSize: '12px' }}>
+              ({filteredHistory.length} of {totalRecords || '?'} records loaded)
+            </Text>
           </Space>
         }
         extra={
@@ -620,22 +697,41 @@ const History = () => {
             <Button onClick={() => fetchHistory(true)} loading={loading} icon={<ReloadOutlined />}>
               Refresh
             </Button>
+
           </Space>
         }
         className="card-container"
       >
-        <Table
-          columns={columns}
-          dataSource={filteredHistory}
-          rowKey="id"
-          loading={loading}
-          pagination={{
-            pageSize: 20,
-            showSizeChanger: true,
-            showQuickJumper: true,
-            showTotal: (total) => `Total ${total} executions`,
+        <div
+          style={{ maxHeight: '600px', overflowY: 'auto' }}
+          onScroll={(e) => {
+            const { scrollTop, scrollHeight, clientHeight } = e.target;
+            // Load more when user scrolls to within 100px of bottom
+            if (scrollHeight - scrollTop - clientHeight < 100 && hasMore && !loadingMore) {
+              loadMoreRecords();
+            }
           }}
-        />
+        >
+          <Table
+            columns={columns}
+            dataSource={filteredHistory}
+            rowKey="id"
+            loading={loading}
+            pagination={false}
+            scroll={{ x: true }}
+          />
+          {loadingMore && (
+            <div style={{ textAlign: 'center', padding: '20px' }}>
+              <Spin size="small" />
+              <span style={{ marginLeft: 8 }}>Loading more records...</span>
+            </div>
+          )}
+          {!hasMore && filteredHistory.length > 0 && (
+            <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+              <Text type="secondary">All {filteredHistory.length} records loaded</Text>
+            </div>
+          )}
+        </div>
       </Card>
 
       {/* Output Modal */}

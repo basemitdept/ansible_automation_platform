@@ -2067,10 +2067,8 @@ def delete_variable(variable_id):
 def get_history():
     # Get pagination parameters
     page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 25, type=int)
-    
-    # Limit per_page to prevent abuse
-    per_page = min(per_page, 100)
+    per_page = request.args.get('per_page', None, type=int)
+    light = request.args.get('light', 'false').lower() == 'true'
     
     # Use eager loading to prevent N+1 query problems
     from sqlalchemy.orm import joinedload
@@ -2083,6 +2081,40 @@ def get_history():
         )\
         .order_by(ExecutionHistory.started_at.desc())
     
+    # If per_page is not specified or is 0, return all records (no pagination)
+    if per_page is None or per_page == 0:
+        # For light mode, limit to recent records to improve performance
+        if light:
+            recent_history = history_query.limit(50).all()
+            print(f"🔍 HISTORY API: Returning {len(recent_history)} recent records (light mode)")
+            return jsonify({
+                'data': [h.to_dict_light() if hasattr(h, 'to_dict_light') else h.to_dict() for h in recent_history],
+                'total': len(recent_history),
+                'page': 1,
+                'pages': 1,
+                'per_page': len(recent_history),
+                'has_next': False,
+                'has_prev': False,
+                'light_mode': True
+            })
+        
+        # Get all records without pagination for maximum performance
+        all_history = history_query.all()
+        print(f"🔍 HISTORY API: Returning ALL {len(all_history)} records (no pagination)")
+        
+        return jsonify({
+            'data': [h.to_dict() for h in all_history],
+            'total': len(all_history),
+            'page': 1,
+            'pages': 1,
+            'per_page': len(all_history),
+            'has_next': False,
+            'has_prev': False
+        })
+    
+    # Apply reasonable limits for paginated requests
+    per_page = min(per_page, 1000)  # Increased limit from 100 to 1000
+    
     # Get paginated results
     paginated = history_query.paginate(
         page=page, 
@@ -2090,10 +2122,10 @@ def get_history():
         error_out=False
     )
     
-    print(f"🔍 HISTORY API: Page {page}, {len(paginated.items)}/{paginated.total} records (eager loaded)")
+    print(f"🔍 HISTORY API: Page {page}, {len(paginated.items)}/{paginated.total} records (paginated)")
     
     return jsonify({
-        'data': [h.to_dict() for h in paginated.items],
+        'data': [h.to_dict_light() if light and hasattr(h, 'to_dict_light') else h.to_dict() for h in paginated.items],
         'pagination': {
             'page': page,
             'per_page': per_page,
@@ -2103,6 +2135,34 @@ def get_history():
             'has_prev': paginated.has_prev
         }
     })
+
+@app.route('/api/history/stats', methods=['GET'])
+def get_history_stats():
+    """Get execution history statistics without heavy data - for dashboard"""
+    try:
+        from sqlalchemy import func
+        
+        # Get total count
+        total_count = ExecutionHistory.query.count()
+        
+        # Get status counts
+        status_counts = db.session.query(
+            ExecutionHistory.status,
+            func.count(ExecutionHistory.id)
+        ).group_by(ExecutionHistory.status).all()
+        
+        # Convert to dict
+        stats = {
+            'total': total_count,
+            'by_status': {status: count for status, count in status_counts}
+        }
+        
+        print(f"🔍 HISTORY STATS API: {total_count} total records, {len(status_counts)} different statuses")
+        
+        return jsonify(stats)
+    except Exception as e:
+        print(f"Error getting history stats: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/history/<history_id>', methods=['DELETE'])
 def delete_history(history_id):
