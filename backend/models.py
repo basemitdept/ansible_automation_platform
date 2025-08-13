@@ -552,6 +552,32 @@ class ExecutionHistory(db.Model):
     
     def to_dict_light(self):
         """Lightweight version for dashboard and quick previews - excludes heavy output data"""
+        import json
+        
+        # Parse host list for multi-host support (lightweight version)
+        hosts_data = []
+        if self.host_list:
+            try:
+                host_list_parsed = json.loads(self.host_list)
+                # Create simplified host entries
+                hosts_data = []
+                for host_info in host_list_parsed:
+                    hosts_data.append({
+                        'id': host_info.get('id'),
+                        'name': host_info.get('name'),
+                        'hostname': host_info.get('hostname')
+                    })
+            except:
+                hosts_data = []
+        
+        # If no host_list, use the single host
+        if not hosts_data and self.host:
+            hosts_data = [{
+                'id': str(self.host.id),
+                'name': self.host.name,
+                'hostname': self.host.hostname
+            }]
+        
         # Optimize playbook data extraction
         playbook_data = None
         if self.playbook:
@@ -560,14 +586,8 @@ class ExecutionHistory(db.Model):
                 'name': self.playbook.name
             }
         
-        # Simplified host data
-        host_data = None
-        if self.host:
-            host_data = {
-                'id': str(self.host.id),
-                'name': self.host.name,
-                'hostname': self.host.hostname
-            }
+        # Single host for compatibility (first host from the list)
+        host_data = hosts_data[0] if hosts_data else None
         
         # Simplified user data
         user_data = {'username': 'unknown', 'name': 'Unknown User'}
@@ -600,10 +620,11 @@ class ExecutionHistory(db.Model):
             'started_at': self.started_at.isoformat() + 'Z' if self.started_at else None,
             'finished_at': self.finished_at.isoformat() + 'Z' if self.finished_at else None,
             'playbook': playbook_data,
-            'host': host_data,
+            'host': host_data,  # Single host for compatibility
+            'hosts': hosts_data,  # All hosts for multi-host display
             'user': user_data,
             'executed_by_type': executed_by_type,
-            # Exclude heavy fields: output, error_output, host_list, hosts array
+            # Exclude heavy fields: output, error_output only
         }
 
     def to_dict(self):
