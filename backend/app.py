@@ -1331,17 +1331,46 @@ def create_hosts_bulk():
         return jsonify({'error': f'Failed to save hosts: {str(e)}'}), 500
 
 @app.route('/api/hosts/<host_id>', methods=['PUT'])
+@jwt_required()
 def update_host(host_id):
     host = Host.query.get_or_404(host_id)
     data = request.json
     
+    # Update basic fields
     host.name = data['name']
     host.hostname = data['hostname']
     host.description = data.get('description', '')
-    host.os_type = data.get('os_type', host.os_type)
-    host.port = data.get('port', host.port)
     host.group_id = data.get('group_id', host.group_id)
     host.updated_at = datetime.utcnow()
+    
+    # Handle os_type and port columns safely (they might not exist in database yet)
+    try:
+        if hasattr(host, 'os_type'):
+            host.os_type = data.get('os_type', getattr(host, 'os_type', 'linux'))
+        else:
+            # Column doesn't exist yet, we'll add it via SQL
+            from sqlalchemy import text
+            db.session.execute(text("""
+                ALTER TABLE hosts ADD COLUMN IF NOT EXISTS os_type VARCHAR(50) DEFAULT 'linux'
+            """))
+            db.session.commit()
+            host.os_type = data.get('os_type', 'linux')
+    except Exception as e:
+        print(f"Warning: Could not update os_type: {e}")
+    
+    try:
+        if hasattr(host, 'port'):
+            host.port = data.get('port', getattr(host, 'port', 22))
+        else:
+            # Column doesn't exist yet, we'll add it via SQL
+            from sqlalchemy import text
+            db.session.execute(text("""
+                ALTER TABLE hosts ADD COLUMN IF NOT EXISTS port INTEGER DEFAULT 22
+            """))
+            db.session.commit()
+            host.port = data.get('port', 22)
+    except Exception as e:
+        print(f"Warning: Could not update port: {e}")
     
     try:
         db.session.commit()

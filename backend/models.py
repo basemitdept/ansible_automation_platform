@@ -183,8 +183,8 @@ class Host(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # These columns might not exist initially, so we'll handle them dynamically
-    # os_type = db.Column(db.String(50), nullable=False, default='linux')
-    # port = db.Column(db.Integer, nullable=False, default=22)
+    os_type = db.Column(db.String(50), nullable=False, default='linux')
+    port = db.Column(db.Integer, nullable=False, default=22)
     
     group = db.relationship('HostGroup', backref='hosts')
     
