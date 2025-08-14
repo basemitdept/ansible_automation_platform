@@ -21,7 +21,7 @@ from functools import wraps
 import psutil
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///ansible_automation.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'jwt-secret-string-change-this-in-production')
@@ -90,8 +90,8 @@ def handle_connect():
 def handle_disconnect():
     print(f"🔴 WEBSOCKET: Client disconnected - {request.sid}")
 
-PLAYBOOKS_DIR = '/app/playbooks'
-FILES_DIR = '/app/playbook_files'
+PLAYBOOKS_DIR = './playbooks'
+FILES_DIR = './playbook_files'
 
 # Ensure directories exist
 os.makedirs(PLAYBOOKS_DIR, exist_ok=True)
@@ -1083,36 +1083,67 @@ def get_host_groups():
 
 @app.route('/api/host-groups', methods=['POST'])
 def create_host_group():
-    data = request.json
-    group = HostGroup(
-        name=data['name'],
-        description=data.get('description', ''),
-        color=data.get('color', '#1890ff')
-    )
-    
     try:
+        data = request.json
+        print(f"Creating host group with data: {data}")
+        
+        # Validate required fields
+        if not data.get('name'):
+            return jsonify({'error': 'Group name is required'}), 400
+        
+        # Validate color format
+        color = data.get('color', '#1890ff')
+        if not isinstance(color, str) or not color.startswith('#'):
+            color = '#1890ff'  # Default fallback
+        
+        group = HostGroup(
+            name=data['name'],
+            description=data.get('description', ''),
+            color=color
+        )
+        
         db.session.add(group)
         db.session.commit()
-        return jsonify(group.to_dict()), 201
+        
+        result = group.to_dict()
+        print(f"Successfully created host group: {result}")
+        return jsonify(result), 201
+        
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 400
+        print(f"Error creating host group: {str(e)}")
+        return jsonify({'error': f'Failed to create host group: {str(e)}'}), 400
 
 @app.route('/api/host-groups/<group_id>', methods=['PUT'])
 def update_host_group(group_id):
-    group = HostGroup.query.get_or_404(group_id)
-    data = request.json
-    
-    group.name = data.get('name', group.name)
-    group.description = data.get('description', group.description)
-    group.color = data.get('color', group.color)
-    
     try:
+        group = HostGroup.query.get_or_404(group_id)
+        data = request.json
+        print(f"Updating host group {group_id} with data: {data}")
+        
+        # Validate required fields
+        if not data.get('name'):
+            return jsonify({'error': 'Group name is required'}), 400
+        
+        # Validate color format
+        color = data.get('color', group.color)
+        if not isinstance(color, str) or not color.startswith('#'):
+            color = group.color or '#1890ff'  # Keep existing or default
+        
+        group.name = data.get('name', group.name)
+        group.description = data.get('description', group.description)
+        group.color = color
+        
         db.session.commit()
-        return jsonify(group.to_dict())
+        
+        result = group.to_dict()
+        print(f"Successfully updated host group: {result}")
+        return jsonify(result)
+        
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 400
+        print(f"Error updating host group {group_id}: {str(e)}")
+        return jsonify({'error': f'Failed to update host group: {str(e)}'}), 400
 
 @app.route('/api/host-groups/<group_id>', methods=['DELETE'])
 def delete_host_group(group_id):
@@ -1589,7 +1620,7 @@ def task_history_exists(task_id):
 history_creation_lock = threading.Lock()
 
 # Thread-safe, atomic history creation/update function
-def create_or_update_history(task, status, output=None, error_output=None):
+def create_or_update_history(task, status, output=None, error_output=None, username=None, password=None, variables=None):
     with history_creation_lock:
         with app.app_context():
             existing_history = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
@@ -1877,14 +1908,72 @@ def terminate_webhook_task(task_id):
 @app.route('/api/artifacts/<execution_id>', methods=['GET'])
 def get_artifacts(execution_id):
     print(f"API: Fetching artifacts for execution_id: {execution_id}")
-    artifacts = Artifact.query.filter_by(execution_id=execution_id).order_by(Artifact.created_at.desc()).all()
-    print(f"API: Found {len(artifacts)} artifacts for execution {execution_id}")
     
-    # Debug: Print artifact details
-    for i, artifact in enumerate(artifacts):
-        print(f"API Artifact {i+1}: {artifact.task_name} - {artifact.host_name} - {artifact.register_name}")
+    # Get pagination parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 100, type=int)  # Default 100 artifacts per page
+    host_filter = request.args.get('host', None)
     
-    return jsonify([a.to_dict() for a in artifacts])
+    # Limit per_page to reasonable values
+    per_page = min(per_page, 500)  # Maximum 500 artifacts per request
+    
+    # Build query
+    query = Artifact.query.filter_by(execution_id=execution_id)
+    
+    # Apply host filter if provided
+    if host_filter:
+        query = query.filter(Artifact.host_name.ilike(f'%{host_filter}%'))
+    
+    # Order by creation time
+    query = query.order_by(Artifact.created_at.desc())
+    
+    # Get total count for pagination info
+    total_count = query.count()
+    print(f"API: Found {total_count} total artifacts for execution {execution_id}")
+    
+    # Apply pagination
+    if per_page > 0:  # per_page = 0 means return all
+        paginated = query.paginate(
+            page=page, 
+            per_page=per_page, 
+            error_out=False
+        )
+        artifacts = paginated.items
+        
+        # Debug: Print artifact details for current page
+        for i, artifact in enumerate(artifacts):
+            print(f"API Artifact {i+1}: {artifact.task_name} - {artifact.host_name} - {artifact.register_name}")
+        
+        return jsonify({
+            'data': [a.to_dict() for a in artifacts],
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total_count,
+                'pages': paginated.pages,
+                'has_next': paginated.has_next,
+                'has_prev': paginated.has_prev
+            }
+        })
+    else:
+        # Return all artifacts without pagination
+        artifacts = query.all()
+        
+        # Debug: Print artifact details
+        for i, artifact in enumerate(artifacts):
+            print(f"API Artifact {i+1}: {artifact.task_name} - {artifact.host_name} - {artifact.register_name}")
+        
+        return jsonify({
+            'data': [a.to_dict() for a in artifacts],
+            'pagination': {
+                'page': 1,
+                'per_page': len(artifacts),
+                'total': total_count,
+                'pages': 1,
+                'has_next': False,
+                'has_prev': False
+            }
+        })
 
 @app.route('/api/artifacts/<artifact_id>/data', methods=['GET'])
 def get_artifact_data(artifact_id):
@@ -2079,7 +2168,7 @@ def get_history():
             joinedload(ExecutionHistory.host),
             joinedload(ExecutionHistory.user)
         )\
-        .order_by(ExecutionHistory.started_at.desc())
+        .order_by(ExecutionHistory.finished_at.desc().nullslast(), ExecutionHistory.started_at.desc())
     
     # If per_page is not specified or is 0, return all records (no pagination)
     if per_page is None or per_page == 0:
@@ -2210,6 +2299,49 @@ def delete_history(history_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/history/<history_id>/refresh-output', methods=['POST'])
+def refresh_execution_output(history_id):
+    """Force refresh execution output by checking original task"""
+    try:
+        history = ExecutionHistory.query.get_or_404(history_id)
+        
+        # Try to find the original task and get fresh output
+        original_task = Task.query.get(history.original_task_id)
+        if original_task and (original_task.output or original_task.error_output):
+            # Update history with fresh output from task
+            old_output_len = len(history.output or '')
+            old_error_len = len(history.error_output or '')
+            
+            history.output = original_task.output
+            history.error_output = original_task.error_output
+            db.session.commit()
+            
+            new_output_len = len(history.output or '')
+            new_error_len = len(history.error_output or '')
+            
+            print(f"✅ Refreshed output for execution {history_id} from task {original_task.id}")
+            print(f"   Output: {old_output_len} -> {new_output_len} chars")
+            print(f"   Error: {old_error_len} -> {new_error_len} chars")
+            
+            return jsonify({
+                'success': True,
+                'message': 'Output refreshed successfully',
+                'execution': history.to_dict()
+            })
+        else:
+            print(f"⚠️ No original task or output found for execution {history_id}")
+            return jsonify({
+                'success': False,
+                'message': 'No original task output available to refresh from'
+            }), 404
+            
+    except Exception as e:
+        print(f"❌ Error refreshing output for execution {history_id}: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to refresh output: {str(e)}'
+        }), 500
+
 # Execute playbook
 @app.route('/api/execute', methods=['POST'])
 @jwt_required()
@@ -2255,8 +2387,40 @@ def execute_playbook():
         username = data.get('username')
         password = data.get('password')
         variables = data.get('variables', {})  # User-provided variable values
+        use_ssh_keys = data.get('use_ssh_keys', False)  # Use SSH key authentication
+        is_rerun = data.get('is_rerun', False)  # Flag to indicate this is a rerun
+        original_execution_id = data.get('original_execution_id')  # Original execution ID for rerun
     except Exception as e:
         return jsonify({'error': f'Invalid request data: {str(e)}'}), 400
+    
+    # Handle rerun - get original credentials from the original execution
+    if is_rerun and original_execution_id:
+        print(f"🔄 RERUN DETECTED: Getting original credentials from execution {original_execution_id}")
+        try:
+            original_execution = ExecutionHistory.query.get(original_execution_id)
+            if original_execution:
+                print(f"📋 Original execution found: {original_execution.id}")
+                print(f"👤 Original username: {original_execution.username}")
+                
+                # Use the original username if not provided
+                if not username and original_execution.username:
+                    username = original_execution.username
+                    print(f"🔄 Using original username: {username}")
+                
+                # For rerun, we'll use SSH key authentication (no password)
+                # This is the most common and secure approach
+                password = None
+                use_ssh_keys = True
+                print(f"🔑 Using SSH key authentication for rerun")
+            else:
+                print(f"⚠️ Original execution not found, using provided credentials")
+        except Exception as e:
+            print(f"⚠️ Error getting original execution: {e}, using provided credentials")
+    
+    # Handle SSH key authentication
+    if use_ssh_keys:
+        password = None  # Force SSH key authentication
+        print(f"Using SSH key authentication")
     
     # Make SSH credentials optional - use default if not provided
     if not username:
@@ -3479,75 +3643,68 @@ def run_ansible_playbook_multi_host_internal(task_id, playbook, hosts, username,
                     original_serial_id = task.get_global_serial_id()
                     print(f"🔍 DEBUG: Webhook task {task.id} original_serial_id = {original_serial_id}")
                     
-                    # Create execution history entry for webhook execution
-                    history = ExecutionHistory(
-                        playbook_id=playbook.id,
-                        host_id=task.host_id,
-                        user_id=task.user_id,  # Use the webhook creator's user ID
-                        status=final_status,
-                        started_at=task.started_at,
-                        finished_at=task.finished_at,
-                        output=task.output,
-                        error_output=task.error_output,
-                        username=username,  # Use the actual SSH username
-                        host_list=task.host_list,
-                        webhook_id=webhook_id,  # Now we have webhook_id from the parameter
-                        original_task_id=task.id, # Link to the original task
-                        original_task_serial_id=original_serial_id  # Preserve the task's original ID
-                    )
-                    db.session.add(history)
-                    db.session.flush()  # Get the history ID
-                    
-                    # Process artifacts from the output for webhook execution
-                    if task.output:
-                        try:
-                            print(f"Extracting artifacts from webhook output for execution {history.id}")
-                            output_lines = task.output.split('\n')
-                            print(f"Total output lines: {len(output_lines)}")
-                            
-                            # Use the existing artifact extraction function
-                            output_artifacts_data = extract_register_from_output(output_lines, history.id, hosts, variables)
-                            
-                            # Create and save all artifacts
-                            artifacts_created = []
-                            for artifact_data in output_artifacts_data:
-                                artifact = Artifact(
-                                    execution_id=artifact_data['execution_id'],
-                                    task_name=artifact_data['task_name'],
-                                    register_name=artifact_data['register_name'],
-                                    register_data=artifact_data['register_data'],
-                                    host_name=artifact_data['host_name'],
-                                    task_status=artifact_data['task_status']
-                                )
-                                db.session.add(artifact)
-                                artifacts_created.append(artifact)
-                            
-                            print(f"Saved {len(artifacts_created)} artifacts for webhook execution {history.id}")
-                            
-                        except Exception as artifact_error:
-                            print(f"Error processing webhook artifacts: {artifact_error}")
-                    
-                    db.session.commit()
-                    
-                    # Emit final status update
-                    socketio.emit('task_update', {
-                        'task_id': str(task_id),
-                        'status': final_status,
-                        'message': f'Webhook execution {final_status}'
-                    })
-                else:
-                    print(f"⚠️ History for task {task.id} already exists (status: {existing.status}), skipping duplicate creation.")
+
+                
+                # Create execution history entry for webhook execution
+                history = ExecutionHistory(
+                    playbook_id=playbook.id,
+                    host_id=task.host_id,
+                    user_id=task.user_id,  # Use the webhook creator's user ID
+                    status=final_status,
+                    started_at=task.started_at,
+                    finished_at=task.finished_at,
+                    output=task.output,
+                    error_output=task.error_output,
+                    username=username,  # Use the actual SSH username
+                    host_list=task.host_list,
+                    webhook_id=webhook_id,  # Now we have webhook_id from the parameter
+                    original_task_id=task.id, # Link to the original task
+                    original_task_serial_id=original_serial_id  # Preserve the task's original ID
+                )
+                db.session.add(history)
+                db.session.flush()  # Get the history ID
+                
+                # Process artifacts from the output for webhook execution
+                if task.output:
+                    try:
+                        print(f"Extracting artifacts from webhook output for execution {history.id}")
+                        output_lines = task.output.split('\n')
+                        print(f"Total output lines: {len(output_lines)}")
+                        
+                        # Use the existing artifact extraction function
+                        output_artifacts_data = extract_register_from_output(output_lines, history.id, hosts, variables)
+                        
+                        # Create and save all artifacts
+                        artifacts_created = []
+                        for artifact_data in output_artifacts_data:
+                            artifact = Artifact(
+                                execution_id=artifact_data['execution_id'],
+                                task_name=artifact_data['task_name'],
+                                register_name=artifact_data['register_name'],
+                                register_data=artifact_data['register_data'],
+                                host_name=artifact_data['host_name'],
+                                task_status=artifact_data['task_status']
+                            )
+                            db.session.add(artifact)
+                            artifacts_created.append(artifact)
+                        
+                        print(f"Saved {len(artifacts_created)} artifacts for webhook execution {history.id}")
+                        
+                    except Exception as artifact_error:
+                        print(f"Error processing webhook artifacts: {artifact_error}")
+                
+                db.session.commit()
+                
+                # Emit final status update
+                socketio.emit('task_update', {
+                    'task_id': str(task_id),
+                    'status': final_status,
+                    'message': f'Webhook execution {final_status}'
+                })
             else:
-                # The task was likely terminated
-                print(f"Webhook task {task_id} was not in 'running' state. Final status update skipped.")
-                # Let's check what the current status is
-                task = Task.query.get(task_id)
-                if task:
-                    print(f"   Current task status: {task.status}")
-                    # Check if there's already a history record
-                    hist = ExecutionHistory.query.filter_by(original_task_id=task_id).first()
-                    if hist:
-                        print(f"   Found existing history with status: {hist.status}")
+                print(f"⚠️ History for task {task.id} already exists (status: {existing.status}), skipping duplicate creation.")
+        
+        # Clean up
         
         # Clean up
         try:
@@ -5671,6 +5828,8 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
                 existing_history = ExecutionHistory.query.filter_by(original_task_id=task.id).first()
                 
                 if not existing_history:
+
+                    
                     history = ExecutionHistory(
                         playbook_id=playbook.id,
                         host_id=host.id,

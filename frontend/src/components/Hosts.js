@@ -162,6 +162,9 @@ const Hosts = ({ currentUser }) => {
   const handleGroupCreate = () => {
     setEditingGroup(null);
     groupForm.resetFields();
+    groupForm.setFieldsValue({
+      color: '#1890ff' // Set default color
+    });
     setGroupModalVisible(true);
   };
 
@@ -173,7 +176,11 @@ const Hosts = ({ currentUser }) => {
 
   const handleEditGroup = (group) => {
     setEditingGroup(group);
-    groupForm.setFieldsValue(group);
+    groupForm.setFieldsValue({
+      name: group.name,
+      description: group.description,
+      color: group.color || '#1890ff' // Ensure color has a default value
+    });
     setGroupModalVisible(true);
   };
 
@@ -300,17 +307,43 @@ const Hosts = ({ currentUser }) => {
 
   const handleGroupSubmit = async (values) => {
     try {
+      // Handle color value from ColorPicker
+      let processedValues = { ...values };
+      
+      // ColorPicker can return different formats, ensure we get a hex string
+      if (values.color) {
+        if (typeof values.color === 'object' && values.color.toHexString) {
+          // ColorPicker returns a color object with toHexString method
+          processedValues.color = values.color.toHexString();
+        } else if (typeof values.color === 'string') {
+          // Already a string, ensure it's a valid hex color
+          if (!values.color.startsWith('#')) {
+            processedValues.color = '#1890ff'; // Default fallback
+          }
+        } else {
+          // Fallback to default color
+          processedValues.color = '#1890ff';
+        }
+      } else {
+        // No color provided, use default
+        processedValues.color = '#1890ff';
+      }
+      
+      console.log('Submitting group with processed values:', processedValues);
+      
       if (editingGroup) {
-        await hostGroupsAPI.update(editingGroup.id, values);
+        await hostGroupsAPI.update(editingGroup.id, processedValues);
         message.success('Host group updated successfully');
       } else {
-        await hostGroupsAPI.create(values);
+        await hostGroupsAPI.create(processedValues);
         message.success('Host group created successfully');
       }
       setGroupModalVisible(false);
       fetchHostGroups();
     } catch (error) {
-      message.error(`Failed to ${editingGroup ? 'update' : 'create'} host group`);
+      console.error('Group submission error:', error);
+      const errorMessage = error.response?.data?.error || `Failed to ${editingGroup ? 'update' : 'create'} host group`;
+      message.error(errorMessage);
     }
   };
 
@@ -891,8 +924,45 @@ Or: 192.168.1.10, 192.168.1.11, 192.168.1.12`}
             label="Color"
             name="color"
             initialValue="#1890ff"
+            rules={[
+              {
+                validator: (_, value) => {
+                  if (!value) {
+                    return Promise.resolve(); // Allow empty, will use default
+                  }
+                  if (typeof value === 'string' && value.startsWith('#')) {
+                    return Promise.resolve();
+                  }
+                  if (typeof value === 'object' && value.toHexString) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Please select a valid color'));
+                }
+              }
+            ]}
           >
-            <ColorPicker showText />
+            <ColorPicker 
+              showText 
+              format="hex"
+              defaultFormat="hex"
+              presets={[
+                {
+                  label: 'Recommended',
+                  colors: [
+                    '#1890ff', // Blue
+                    '#52c41a', // Green
+                    '#faad14', // Orange
+                    '#ff4d4f', // Red
+                    '#722ed1', // Purple
+                    '#13c2c2', // Cyan
+                    '#eb2f96', // Magenta
+                    '#f5222d', // Red
+                    '#fa8c16', // Orange
+                    '#a0d911', // Lime
+                  ],
+                },
+              ]}
+            />
           </Form.Item>
 
           <Form.Item

@@ -65,6 +65,8 @@ const PlaybookEditor = ({ currentUser }) => {
     fetchGlobalVariables();
   }, []);
 
+
+
   const fetchPlaybooks = async () => {
     try {
       const response = await playbooksAPI.getAll();

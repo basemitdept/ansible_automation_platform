@@ -18,9 +18,9 @@ import {
   Collapse,
   Badge,
   List,
+  Spin,
   Avatar,
-  Tooltip,
-  Spin
+  Tooltip
 } from 'antd';
 import {
   HistoryOutlined,
@@ -33,7 +33,7 @@ import {
   DatabaseOutlined,
   ReloadOutlined,
   PauseCircleOutlined,
-  RedoOutlined,
+
   ApiOutlined,
   StopOutlined
 } from '@ant-design/icons';
@@ -69,12 +69,7 @@ const History = () => {
   // Cache for full execution details (only load when needed)
   const [executionDetailsCache, setExecutionDetailsCache] = useState(new Map());
   
-  // Rerun functionality state
-  const [rerunModalVisible, setRerunModalVisible] = useState(false);
-  const [selectedRerunExecution, setSelectedRerunExecution] = useState(null);
-  const [credentials, setCredentials] = useState([]);
-  const [selectedCredential, setSelectedCredential] = useState(null);
-  const [rerunning, setRerunning] = useState(false);
+  
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -272,12 +267,22 @@ const History = () => {
         
         return false;
       });
-      // Keep sort order (newest first) after filtering
+      // Keep sort order (newest finished first) after filtering
       const sortedFiltered = filtered.sort((a, b) => {
-        const dateA = new Date(a.started_at || a.created_at);
-        const dateB = new Date(b.started_at || b.created_at);
-        return dateB - dateA;
-        });
+        // Sort by finished_at first, then by started_at for running tasks
+        const finishA = a.finished_at ? new Date(a.finished_at) : null;
+        const finishB = b.finished_at ? new Date(b.finished_at) : null;
+        
+        if (!finishA && !finishB) {
+          // Both are running, sort by start time
+          const startA = new Date(a.started_at || a.created_at);
+          const startB = new Date(b.started_at || b.created_at);
+          return startB - startA;
+        }
+        if (!finishA) return 1; // Running tasks go to bottom
+        if (!finishB) return -1;
+        return finishB - finishA; // Newest finished first
+      });
         setFilteredHistory(sortedFiltered);
       }
     }, 300); // 300ms debounce delay
@@ -322,41 +327,223 @@ const History = () => {
     );
   };
 
+  // Cache for artifacts to prevent refetching
+  const [artifactsCache, setArtifactsCache] = useState(new Map());
+  const [outputLoading, setOutputLoading] = useState(false);
+  const [artifactHostFilter, setArtifactHostFilter] = useState('');
+  const [autoRefreshing, setAutoRefreshing] = useState(false);
+  
+  // Refs for console output containers
+  const consoleOutputRef = useRef(null);
+  const errorOutputRef = useRef(null);
+
+  const forceRefreshOutput = async (execution) => {
+    if (!execution) return;
+    
+    console.log('🔄 Force refreshing output for execution:', execution.id);
+    setOutputLoading(true);
+    
+    try {
+      // First try the backend refresh endpoint to sync from original task
+      try {
+        const refreshResponse = await historyAPI.refreshOutput(execution.id);
+        if (refreshResponse.data.success) {
+          console.log('✅ Backend refresh successful');
+          // Use the refreshed execution data from backend
+          const refreshedExecution = refreshResponse.data.execution;
+          
+          // Clear cache and update with fresh data
+          executionDetailsCache.delete(execution.id);
+          executionDetailsCache.set(execution.id, refreshedExecution);
+          setExecutionDetailsCache(new Map(executionDetailsCache));
+          setSelectedExecution(refreshedExecution);
+          
+          message.success('Console output refreshed from original task');
+          return;
+        }
+      } catch (refreshError) {
+        console.warn('Backend refresh failed, falling back to regular fetch:', refreshError);
+      }
+      
+      // Fallback: Clear cache and fetch fresh data
+      executionDetailsCache.delete(execution.id);
+      setExecutionDetailsCache(new Map(executionDetailsCache));
+      
+      // Fetch fresh execution details
+      const response = await historyAPI.getById(execution.id);
+      const freshExecution = response.data;
+      
+      // Update cache and state
+      executionDetailsCache.set(execution.id, freshExecution);
+      setExecutionDetailsCache(new Map(executionDetailsCache));
+      setSelectedExecution(freshExecution);
+      
+      message.success('Console output refreshed');
+    } catch (error) {
+      console.error('Failed to refresh execution output:', error);
+      message.error('Failed to refresh console output');
+    } finally {
+      setOutputLoading(false);
+    }
+  };
+
   const showOutput = async (execution) => {
     setOutputModalVisible(true);
+    setOutputLoading(true);
+    
+    // Reset host filter for new execution
+    setArtifactHostFilter('');
+    
+    // Set execution immediately for faster modal display
+    setSelectedExecution(execution);
     
     // Check if we have full execution details (output fields) from cache
     let fullExecution = execution;
+    let needsExecutionFetch = false;
+    
     if (executionDetailsCache.has(execution.id)) {
-      fullExecution = executionDetailsCache.get(execution.id);
-      setSelectedExecution(fullExecution);
-    } else if (!execution.output && !execution.error_output) {
-      // Light mode data - need to fetch full execution details
-      console.log('📦 Fetching full execution details for output:', execution.id);
-      try {
-        const response = await historyAPI.getById(execution.id);
-        fullExecution = response.data;
-        // Cache for future use
-        executionDetailsCache.set(execution.id, fullExecution);
-        setExecutionDetailsCache(new Map(executionDetailsCache));
-      } catch (error) {
-        console.error('Failed to fetch full execution details:', error);
-        message.error('Failed to load execution output');
+      const cachedExecution = executionDetailsCache.get(execution.id);
+      // More aggressive cache validation - only use cache if it has actual output data
+      const hasOutput = cachedExecution.output || cachedExecution.error_output;
+      const isCompleted = ['completed', 'failed', 'partial', 'terminated'].includes(cachedExecution.status);
+      
+      if (hasOutput || (isCompleted && cachedExecution.output !== null)) {
+        // Cache has output or is a completed execution with explicit null output
+        fullExecution = cachedExecution;
+      } else {
+        // Cache might be incomplete or missing output, fetch fresh data
+        needsExecutionFetch = true;
       }
+    } else if (!execution.output && !execution.error_output) {
+      needsExecutionFetch = true;
     }
     
-    setSelectedExecution(fullExecution);
-    
-    // Fetch artifacts for this execution
-    setArtifactsLoading(true);
-    try {
-      const response = await artifactsAPI.getByExecution(execution.id);
-      setArtifacts(response.data);
-    } catch (error) {
-      console.error('Failed to fetch artifacts');
+    // Check if we have artifacts cached
+    let needsArtifactsFetch = !artifactsCache.has(execution.id);
+    if (artifactsCache.has(execution.id)) {
+      setArtifacts(artifactsCache.get(execution.id));
+    } else {
       setArtifacts([]);
+      setArtifactsLoading(true);
+    }
+    
+    try {
+      // Fetch both in parallel if needed
+      const promises = [];
+      
+      if (needsExecutionFetch) {
+        console.log('📦 Fetching full execution details for output:', execution.id);
+        promises.push(
+          historyAPI.getById(execution.id).then(response => {
+            fullExecution = response.data;
+            // Cache for future use
+            executionDetailsCache.set(execution.id, fullExecution);
+            setExecutionDetailsCache(new Map(executionDetailsCache));
+            setSelectedExecution(fullExecution);
+            return fullExecution;
+          })
+        );
+      }
+      
+      if (needsArtifactsFetch) {
+        promises.push(
+          artifactsAPI.getByExecution(execution.id, { per_page: 0 }).then(response => {
+            // Handle both old and new API response formats
+            const artifactsData = response.data?.data || response.data || [];
+            // Cache artifacts
+            artifactsCache.set(execution.id, artifactsData);
+            setArtifactsCache(new Map(artifactsCache));
+            setArtifacts(artifactsData);
+            return artifactsData;
+          })
+        );
+      }
+      
+      // Wait for all parallel requests to complete
+      if (promises.length > 0) {
+        await Promise.all(promises);
+      }
+      
+      // Enhanced auto-refresh for missing output scenarios
+      const currentExecution = needsExecutionFetch ? fullExecution : execution;
+      
+      // Auto-refresh conditions:
+      // 1. Completed execution with no output
+      // 2. Any execution with status that suggests it should have output but doesn't
+      const shouldAutoRefresh = (
+        (currentExecution.status === 'completed' || 
+         currentExecution.status === 'failed' || 
+         currentExecution.status === 'partial' ||
+         currentExecution.status === 'terminated') &&
+        !currentExecution.output && 
+        !currentExecution.error_output &&
+        !needsExecutionFetch
+      );
+      
+      if (shouldAutoRefresh) {
+        console.log(`⚠️ ${currentExecution.status} execution missing output, attempting auto-refresh...`);
+        setAutoRefreshing(true);
+        
+        // Try multiple refresh attempts with increasing delays
+        const refreshAttempts = [
+          { method: 'backend', delay: 0 },
+          { method: 'fetch', delay: 500 },
+          { method: 'backend', delay: 1000 }
+        ];
+        
+        for (const attempt of refreshAttempts) {
+          try {
+            await new Promise(resolve => setTimeout(resolve, attempt.delay));
+            
+            if (attempt.method === 'backend') {
+              const refreshResponse = await historyAPI.refreshOutput(currentExecution.id);
+              if (refreshResponse.data.success) {
+                const refreshedExecution = refreshResponse.data.execution;
+                if (refreshedExecution.output || refreshedExecution.error_output) {
+                  executionDetailsCache.set(currentExecution.id, refreshedExecution);
+                  setExecutionDetailsCache(new Map(executionDetailsCache));
+                  setSelectedExecution(refreshedExecution);
+                  console.log(`✅ Auto-refresh successful from backend sync (attempt ${refreshAttempts.indexOf(attempt) + 1})`);
+                  return; // Exit early since we got the data
+                }
+              }
+            } else if (attempt.method === 'fetch') {
+              const response = await historyAPI.getById(currentExecution.id);
+              const refreshedExecution = response.data;
+              if (refreshedExecution.output || refreshedExecution.error_output) {
+                executionDetailsCache.set(currentExecution.id, refreshedExecution);
+                setExecutionDetailsCache(new Map(executionDetailsCache));
+                setSelectedExecution(refreshedExecution);
+                console.log(`✅ Auto-refresh successful from regular fetch (attempt ${refreshAttempts.indexOf(attempt) + 1})`);
+                return; // Exit early since we got the data
+              }
+            }
+          } catch (error) {
+            console.warn(`Auto-refresh attempt ${refreshAttempts.indexOf(attempt) + 1} (${attempt.method}) failed:`, error);
+          }
+        }
+        
+        console.log('⚠️ All auto-refresh attempts completed but still no output found');
+        setAutoRefreshing(false);
+      }
+      
+    } catch (error) {
+      console.error('Failed to fetch execution details or artifacts:', error);
+      message.error('Failed to load execution data');
     } finally {
+      setOutputLoading(false);
       setArtifactsLoading(false);
+      setAutoRefreshing(false);
+      
+      // Reset scroll position after loading completes
+      setTimeout(() => {
+        if (consoleOutputRef.current) {
+          consoleOutputRef.current.scrollTop = 0;
+        }
+        if (errorOutputRef.current) {
+          errorOutputRef.current.scrollTop = 0;
+        }
+      }, 100);
     }
   };
 
@@ -371,81 +558,9 @@ const History = () => {
     }
   };
 
-  const handleRerun = async (execution) => {
-    setSelectedRerunExecution(execution);
-    
-    // Fetch credentials for authentication options
-    try {
-      const response = await credentialsAPI.getAll();
-      setCredentials(response.data);
-    } catch (error) {
-      console.error('Failed to fetch credentials');
-      setCredentials([]);
-    }
-    
-    setRerunModalVisible(true);
-  };
 
-  const executeRerun = async (authData) => {
-    if (!selectedRerunExecution) return;
-    
-    setRerunning(true);
-    try {
-      // Get host IDs from the execution history
-      const hostIds = selectedRerunExecution.hosts ? 
-        selectedRerunExecution.hosts.map(host => host.id) : 
-        (selectedRerunExecution.host ? [selectedRerunExecution.host.id] : []);
-      
-      const executeData = {
-        playbook_id: selectedRerunExecution.playbook_id,
-        host_ids: hostIds,
-        ...authData
-      };
 
-      const response = await tasksAPI.execute(executeData);
-      
-      const hostCount = hostIds.length;
-      const targetInfo = hostCount > 0 ? `${hostCount} host(s)` : 'dynamic targets';
-      message.success(`Playbook rerun started on ${targetInfo}`);
-      
-      setRerunModalVisible(false);
-      
-      // Navigate to the task detail page
-      if (response.data.task && response.data.task.id) {
-        navigate(`/tasks/${response.data.task.id}`);
-      }
-      
-    } catch (error) {
-      message.error('Failed to rerun playbook');
-      console.error('Rerun error:', error);
-    } finally {
-      setRerunning(false);
-    }
-  };
 
-  const handleRerunWithCredential = async () => {
-    if (!selectedCredential) {
-      message.warning('Please select a credential');
-      return;
-    }
-
-    try {
-      const credResponse = await credentialsAPI.getPassword(selectedCredential);
-      const credential = credentials.find(c => c.id === selectedCredential);
-      
-      await executeRerun({
-        username: credential.username,
-        password: credResponse.data.password
-      });
-    } catch (error) {
-      message.error('Failed to get credential password');
-      console.error('Credential error:', error);
-    }
-  };
-
-  const handleRerunWithoutCredentials = async () => {
-    await executeRerun({});
-  };
 
   const parseExecutionSummary = (output) => {
     if (!output) return null;
@@ -640,6 +755,24 @@ const History = () => {
       },
       width: 130,
       sorter: (a, b) => moment(a.started_at).unix() - moment(b.started_at).unix(),
+    },
+    {
+      title: 'Finished',
+      dataIndex: 'finished_at',
+      key: 'finished_at',
+      render: (date) => {
+        if (!date) return 'Still running...';
+        const momentDate = moment(date);
+        return momentDate.isValid() ? momentDate.format('MMM DD, YYYY HH:mm:ss') : '-';
+      },
+      width: 130,
+      sorter: (a, b) => {
+        // Handle null values (still running tasks)
+        if (!a.finished_at && !b.finished_at) return 0;
+        if (!a.finished_at) return 1; // Still running tasks go to the bottom
+        if (!b.finished_at) return -1;
+        return moment(a.finished_at).unix() - moment(b.finished_at).unix();
+      },
       defaultSortOrder: 'descend',
     },
     {
@@ -666,13 +799,6 @@ const History = () => {
       key: 'actions',
       render: (_, record) => (
         <Space size="small">
-          <Button
-            type="text"
-            icon={<RedoOutlined />}
-            onClick={() => handleRerun(record)}
-            title="Rerun this task"
-            size="small"
-          />
           <Button
             type="text"
             icon={<EyeOutlined />}
@@ -904,46 +1030,104 @@ const History = () => {
               return null;
             })()}
 
-            <Tabs defaultActiveKey="output">
+            <Tabs 
+              defaultActiveKey="output"
+              tabBarExtraContent={
+                <Button 
+                  icon={<ReloadOutlined />} 
+                  size="small" 
+                  onClick={() => forceRefreshOutput(selectedExecution)}
+                  loading={outputLoading}
+                  title="Refresh console output"
+                >
+                  Refresh
+                </Button>
+              }
+            >
               <TabPane tab="Console Output" key="output">
-                {selectedExecution.output && (
-                  <div
-                    style={{
-                      backgroundColor: '#1f1f1f',
-                      color: '#fff',
-                      padding: '16px',
-                      borderRadius: '6px',
-                      fontFamily: 'monospace',
-                      fontSize: '12px',
-                      maxHeight: '400px',
-                      overflow: 'auto',
-                      whiteSpace: 'pre-wrap'
-                    }}
-                  >
-                    {selectedExecution.output}
-                  </div>
-                )}
-                
-                {selectedExecution.error_output && (
-                  <div style={{ marginTop: 16 }}>
-                    <Text strong style={{ color: '#ff4d4f' }}>Error Output:</Text>
-                    <div
-                      style={{
-                        backgroundColor: '#2d1b1b',
-                        color: '#ff7875',
-                        padding: '16px',
-                        borderRadius: '6px',
-                        fontFamily: 'monospace',
-                        fontSize: '12px',
-                        maxHeight: '200px',
-                        overflow: 'auto',
-                        marginTop: '8px',
-                        whiteSpace: 'pre-wrap'
-                      }}
-                    >
-                      {selectedExecution.error_output}
+                {outputLoading ? (
+                  <div style={{ textAlign: 'center', padding: '40px' }}>
+                    <Spin size="large" />
+                    <div style={{ marginTop: 16, color: '#666' }}>
+                      {autoRefreshing ? 'Auto-refreshing missing output...' : 'Loading execution output...'}
                     </div>
                   </div>
+                ) : (
+                  <>
+                    {selectedExecution?.output && (
+                      <div
+                        ref={consoleOutputRef}
+                        style={{
+                          backgroundColor: '#1f1f1f',
+                          color: '#fff',
+                          padding: '16px',
+                          borderRadius: '6px',
+                          fontFamily: 'monospace',
+                          fontSize: '12px',
+                          maxHeight: '400px',
+                          overflow: 'auto',
+                          whiteSpace: 'pre-wrap',
+                          border: '1px solid #333'
+                        }}
+                      >
+                        {selectedExecution.output}
+                      </div>
+                    )}
+                    
+                    {selectedExecution?.error_output && (
+                      <div style={{ marginTop: 16 }}>
+                        <Text strong style={{ color: '#ff4d4f' }}>Error Output:</Text>
+                        <div
+                          ref={errorOutputRef}
+                          style={{
+                            backgroundColor: '#2d1b1b',
+                            color: '#ff7875',
+                            padding: '16px',
+                            borderRadius: '6px',
+                            fontFamily: 'monospace',
+                            fontSize: '12px',
+                            maxHeight: '200px',
+                            overflow: 'auto',
+                            marginTop: '8px',
+                            whiteSpace: 'pre-wrap',
+                            border: '1px solid #8b5a5a'
+                          }}
+                        >
+                          {selectedExecution.error_output}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {!selectedExecution?.output && !selectedExecution?.error_output && (
+                      <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                        <div>No console output available for this execution</div>
+                        <div style={{ marginTop: 8, fontSize: '12px' }}>
+                          {selectedExecution?.status === 'running' ? (
+                            <>
+                              This execution is still running. Output will appear as the task progresses.
+                              <br />
+                              You can refresh manually to check for new output.
+                            </>
+                          ) : (
+                            <>
+                              This might occur if the execution failed to save output or the output was lost.
+                              <br />
+                              The system has automatically tried to recover the output.
+                              <br />
+                              Try refreshing manually using the refresh button above.
+                            </>
+                          )}
+                        </div>
+                        {selectedExecution?.status && (
+                          <div style={{ marginTop: 12, fontSize: '11px', color: '#999' }}>
+                            Execution Status: {selectedExecution.status}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+
+                  </>
                 )}
               </TabPane>
               
@@ -951,22 +1135,59 @@ const History = () => {
                 tab={
                   <span>
                     Register Artifacts 
-                    <Badge count={artifacts.length} style={{ marginLeft: 8 }} />
+                    <Badge 
+                      count={artifactsLoading ? <Spin size="small" /> : 
+                        artifactHostFilter ? 
+                          artifacts.filter(a => a.host_name.toLowerCase().includes(artifactHostFilter.toLowerCase())).length :
+                          artifacts.length
+                      } 
+                      style={{ marginLeft: 8 }} 
+                      showZero={false}
+                    />
                   </span>
                 } 
                 key="artifacts"
               >
                 {artifactsLoading ? (
-                  <div style={{ textAlign: 'center', padding: '20px' }}>
-                    Loading register variables...
+                  <div style={{ textAlign: 'center', padding: '40px' }}>
+                    <Spin size="large" />
+                    <div style={{ marginTop: 16, color: '#666' }}>Loading register variables...</div>
                   </div>
                 ) : artifacts.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
-                    No register variables found for this execution
+                  <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                    <div>No register variables found for this execution</div>
                   </div>
                 ) : (
-                  <Collapse>
-                    {artifacts.map((artifact) => (
+                  <>
+                    {artifacts.length > 10 && (
+                      <div style={{ marginBottom: 16 }}>
+                        <Input.Search
+                          placeholder="Filter by host name..."
+                          value={artifactHostFilter}
+                          onChange={(e) => setArtifactHostFilter(e.target.value)}
+                          style={{ marginBottom: 8 }}
+                          allowClear
+                        />
+                        {artifacts.length > 50 && (
+                          <Alert 
+                            message={`Showing ${artifacts.filter(a => 
+                              artifactHostFilter === '' || 
+                              a.host_name.toLowerCase().includes(artifactHostFilter.toLowerCase())
+                            ).length} of ${artifacts.length} artifacts from multiple hosts`} 
+                            type="info" 
+                            showIcon
+                          />
+                        )}
+                      </div>
+                    )}
+                    <div style={{ maxHeight: '500px', overflow: 'auto' }}>
+                      <Collapse>
+                        {artifacts
+                          .filter(artifact => 
+                            artifactHostFilter === '' || 
+                            artifact.host_name.toLowerCase().includes(artifactHostFilter.toLowerCase())
+                          )
+                          .map((artifact) => (
                       <Collapse.Panel
                         header={
                           <div>
@@ -1164,7 +1385,9 @@ const History = () => {
                         </div>
                       </Collapse.Panel>
                     ))}
-                  </Collapse>
+                      </Collapse>
+                    </div>
+                  </>
                 )}
               </TabPane>
               
@@ -1236,102 +1459,7 @@ const History = () => {
         )}
       </Modal>
 
-      {/* Rerun Modal */}
-      <Modal
-        title={
-          <Space>
-            <RedoOutlined />
-            Rerun Playbook - {selectedRerunExecution?.playbook?.name}
-          </Space>
-        }
-        open={rerunModalVisible}
-        onCancel={() => setRerunModalVisible(false)}
-        width={500}
-        footer={null}
-      >
-        {selectedRerunExecution && (
-          <div>
-            <div style={{ marginBottom: 16 }}>
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <div>
-                  <Text strong>Playbook:</Text> {selectedRerunExecution.playbook?.name}
-                </div>
-                <div>
-                  <Text strong>Hosts:</Text> {
-                    selectedRerunExecution.hosts?.length > 0 
-                      ? `${selectedRerunExecution.hosts.length} host(s): ${selectedRerunExecution.hosts.map(h => h.name).join(', ')}`
-                      : selectedRerunExecution.host?.name || 'Dynamic targets'
-                  }
-                </div>
-                <div>
-                  <Text strong>Original User:</Text> {selectedRerunExecution.username || 'Unknown'}
-                </div>
-              </Space>
-            </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <Text strong>Choose authentication method:</Text>
-            </div>
-
-            <Space direction="vertical" style={{ width: '100%' }}>
-              {credentials.length > 0 && (
-                <Card size="small" title="Use Saved Credentials">
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <div>
-                      <Text>Select a credential:</Text>
-                      <div style={{ marginTop: 8 }}>
-                        {credentials
-                          .filter(cred => cred.credential_type === 'ssh' || !cred.credential_type) // Show SSH credentials only
-                          .map(cred => (
-                          <div key={cred.id} style={{ marginBottom: 8 }}>
-                            <label style={{ display: 'flex', alignItems: 'center' }}>
-                              <input
-                                type="radio"
-                                name="credential"
-                                value={cred.id}
-                                checked={selectedCredential === cred.id}
-                                onChange={() => setSelectedCredential(cred.id)}
-                                style={{ marginRight: 8 }}
-                              />
-                              <span>
-                                <strong>{cred.name}</strong> ({cred.username})
-                                {cred.description && <span style={{ color: '#666' }}> - {cred.description}</span>}
-                              </span>
-                            </label>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <Button 
-                      type="primary" 
-                      onClick={handleRerunWithCredential}
-                      loading={rerunning}
-                      disabled={!selectedCredential}
-                    >
-                      Rerun with Selected Credential
-                    </Button>
-                  </Space>
-                </Card>
-              )}
-
-              <Card size="small" title="Use SSH Keys">
-                <Space direction="vertical">
-                  <Text type="secondary">
-                    Use SSH key-based authentication (no password required)
-                  </Text>
-                  <Button 
-                    type="default" 
-                    onClick={handleRerunWithoutCredentials}
-                    loading={rerunning}
-                  >
-                    Rerun with SSH Keys
-                  </Button>
-                </Space>
-              </Card>
-            </Space>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 };

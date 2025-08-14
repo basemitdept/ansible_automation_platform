@@ -116,11 +116,16 @@ export const historyAPI = {
     return api.get(`/history/${id}`);
   },
   delete: (id) => api.delete(`/history/${id}`),
+  refreshOutput: (id) => api.post(`/history/${id}/refresh-output`),
 };
 
 // Artifacts API
 export const artifactsAPI = {
-  getByExecution: (executionId) => api.get(`/artifacts/${executionId}`),
+  getByExecution: (executionId, params = {}) => {
+    const queryParams = new URLSearchParams(params);
+    const query = queryParams.toString();
+    return api.get(`/artifacts/${executionId}${query ? `?${query}` : ''}`);
+  },
   getData: (artifactId) => api.get(`/artifacts/${artifactId}/data`),
 };
 
