@@ -918,7 +918,39 @@ const History = () => {
             <div style={{ marginBottom: 16 }}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div>
-                  <Text strong>Host:</Text> {selectedExecution.host?.name} ({selectedExecution.host?.hostname})
+                  <Text strong>Hosts:</Text> 
+                  {(() => {
+                    const hosts = selectedExecution.hosts || [selectedExecution.host];
+                    const validHosts = hosts.filter(host => host);
+                    
+                    if (validHosts.length === 0) {
+                      return <span style={{ color: '#999' }}>No hosts</span>;
+                    }
+                    
+                    if (validHosts.length === 1) {
+                      const host = validHosts[0];
+                      return (
+                        <span>
+                          {host.name} ({host.hostname})
+                        </span>
+                      );
+                    }
+                    
+                    return (
+                      <div>
+                        <div style={{ marginBottom: 4 }}>
+                          <Tag color="blue">{validHosts.length} hosts</Tag>
+                        </div>
+                        <div style={{ maxHeight: '120px', overflowY: 'auto', border: '1px solid #d9d9d9', borderRadius: '6px', padding: '8px', backgroundColor: '#fafafa' }}>
+                          {validHosts.map((host, index) => (
+                            <div key={index} style={{ fontSize: '12px', marginBottom: '4px', padding: '2px 0' }}>
+                              <span style={{ fontWeight: '500' }}>{host.name}</span> <code>({host.hostname})</code>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div>
                   <Text strong>Status:</Text> {getStatusTag(selectedExecution.status)}

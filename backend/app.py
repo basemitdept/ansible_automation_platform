@@ -2608,7 +2608,8 @@ def execute_playbook():
         playbook_data = {
             'id': playbook.id,
             'name': playbook.name,
-            'content': playbook.content
+            'content': playbook.content,
+            'os_type': playbook.os_type  # Add OS type for proper Windows/Linux handling
         }
         
         print(f"🚀 STARTING EXECUTION OF PLAYBOOK: {playbook_data['id']} - {playbook_data['name']}")
@@ -2906,7 +2907,8 @@ def trigger_webhook(webhook_token):
     playbook_data = {
         'id': playbook.id,
         'name': playbook.name,
-        'content': playbook.content
+        'content': playbook.content,
+        'os_type': playbook.os_type  # Add OS type for proper Windows/Linux handling
     }
     
     # Update webhook statistics
@@ -4889,6 +4891,7 @@ def run_ansible_playbook_multi_host_safe(task_id, playbook_data, host_data, user
             self.id = data['id']
             self.name = data['name']
             self.content = data['content']
+            self.os_type = data.get('os_type', 'linux')  # Add OS type support
     
     class SimpleHost:
         def __init__(self, host_dict):
@@ -5625,27 +5628,59 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
     try:
         # Create temporary inventory file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as inv_file:
+            # Determine connection type based on playbook OS type
+            playbook_os_type = getattr(playbook, 'os_type', 'linux')
+            is_windows_playbook = playbook_os_type.lower() == 'windows'
+            
+            print(f"🖥️ Playbook OS type: {playbook_os_type}, Windows playbook: {is_windows_playbook}")
+            
             # Add host to both 'targets' and 'all' groups for compatibility
             if host.hostname != host.name:
-                inv_content = f"[targets]\n{host.name} ansible_host={host.hostname}\n\n[all]\n{host.name} ansible_host={host.hostname}\n\n[all:vars]\n"
+                inv_content = f"[targets]\n{host.name} ansible_host={host.hostname}"
+                if is_windows_playbook:
+                    inv_content += f" ansible_port=5986 ansible_connection=winrm ansible_winrm_server_cert_validation=ignore"
+                inv_content += f"\n\n[all]\n{host.name} ansible_host={host.hostname}"
+                if is_windows_playbook:
+                    inv_content += f" ansible_port=5986 ansible_connection=winrm ansible_winrm_server_cert_validation=ignore"
+                inv_content += f"\n\n[all:vars]\n"
             else:
-                inv_content = f"[targets]\n{host.hostname}\n\n[all]\n{host.hostname}\n\n[all:vars]\n"
+                inv_content = f"[targets]\n{host.hostname}"
+                if is_windows_playbook:
+                    inv_content += f" ansible_port=5986 ansible_connection=winrm ansible_winrm_server_cert_validation=ignore"
+                inv_content += f"\n\n[all]\n{host.hostname}"
+                if is_windows_playbook:
+                    inv_content += f" ansible_port=5986 ansible_connection=winrm ansible_winrm_server_cert_validation=ignore"
+                inv_content += f"\n\n[all:vars]\n"
+            
             inv_content += f"ansible_user={username}\n"
             
-            # Add password if provided, otherwise use SSH key authentication
-            if password:
-                inv_content += f"ansible_ssh_pass={password}\n"
-                inv_content += f"ansible_become_pass={password}\n"  # Add sudo password
-                inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password\n"
+            if is_windows_playbook:
+                # Windows WinRM settings
+                if password:
+                    inv_content += f"ansible_password={password}\n"
+                inv_content += "ansible_winrm_scheme=https\n"
+                inv_content += "ansible_connection=winrm\n"
+                inv_content += "ansible_winrm_server_cert_validation=ignore\n"
+                inv_content += "ansible_become_method=runas\n"
+                inv_content += "ansible_winrm_transport=ntlm\n"
+                inv_content += "ansible_winrm_port=5986\n"
+                print(f"🪟 Windows playbook detected - using WinRM (port 5986) for host {host.hostname}")
             else:
-                # Use SSH key authentication
-                inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey\n"
-            
-            # Common settings
-            inv_content += "ansible_host_key_checking=False\n"
-            inv_content += "ansible_connection=ssh\n"
-            inv_content += "ansible_ssh_timeout=30\n"
-            inv_content += "ansible_connect_timeout=30\n"
+                # Linux SSH settings
+                if password:
+                    inv_content += f"ansible_ssh_pass={password}\n"
+                    inv_content += f"ansible_become_pass={password}\n"  # Add sudo password
+                    inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password\n"
+                else:
+                    # Use SSH key authentication
+                    inv_content += "ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey\n"
+                
+                # Common SSH settings
+                inv_content += "ansible_host_key_checking=False\n"
+                inv_content += "ansible_connection=ssh\n"
+                inv_content += "ansible_ssh_timeout=30\n"
+                inv_content += "ansible_connect_timeout=30\n"
+                print(f"🐧 Linux playbook detected - using SSH (port 22) for host {host.hostname}")
             
             inv_file.write(inv_content)
             inventory_path = inv_file.name
@@ -5721,20 +5756,32 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
             '-e', f'ansible_user={username}'
         ]
         
-        # Add authentication-specific parameters
-        if password:
-            cmd.extend([
-                '-e', f'ansible_ssh_pass={password}',
-                '-e', f'ansible_password={password}',  # For WinRM connections
-                '-e', f'ansible_become_pass={password}',  # Add sudo password
-                '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password"',
-                '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
-            ])
+        # Add authentication-specific parameters based on OS type
+        if is_windows_playbook:
+            # Windows WinRM parameters
+            if password:
+                cmd.extend([
+                    '-e', f'ansible_password={password}',
+                    '-e', 'ansible_winrm_scheme=https',
+                    '-e', 'ansible_winrm_server_cert_validation=ignore',
+                    '-e', 'ansible_become_method=runas',
+                    '-e', 'ansible_winrm_transport=ntlm',
+                    '-e', 'ansible_winrm_port=5986'
+                ])
         else:
-            cmd.extend([
-                '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey"',
-                '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey'
-            ])
+            # Linux SSH parameters
+            if password:
+                cmd.extend([
+                    '-e', f'ansible_ssh_pass={password}',
+                    '-e', f'ansible_become_pass={password}',  # Add sudo password
+                    '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password"',
+                    '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
+                ])
+            else:
+                cmd.extend([
+                    '-e', 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey"',
+                    '--ssh-common-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey'
+                ])
         
         
         # Add user-defined variables to the command
@@ -5757,11 +5804,21 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
             'ANSIBLE_STDOUT_CALLBACK': 'default'  # Use default callback for consistent output
         }
         
-        # Set authentication-specific environment variables
-        if password:
-            base_env['ANSIBLE_SSH_ARGS'] = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
+        # Set authentication-specific environment variables based on OS type
+        if is_windows_playbook:
+            # Windows WinRM environment variables
+            base_env['ANSIBLE_CONNECTION'] = 'winrm'
+            base_env['ANSIBLE_WINRM_SCHEME'] = 'https'
+            base_env['ANSIBLE_WINRM_SERVER_CERT_VALIDATION'] = 'ignore'
+            base_env['ANSIBLE_BECOME_METHOD'] = 'runas'
+            base_env['ANSIBLE_WINRM_TRANSPORT'] = 'ntlm'
+            base_env['ANSIBLE_WINRM_PORT'] = '5986'
         else:
-            base_env['ANSIBLE_SSH_ARGS'] = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey'
+            # Linux SSH environment variables
+            if password:
+                base_env['ANSIBLE_SSH_ARGS'] = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=yes -o PreferredAuthentications=password'
+            else:
+                base_env['ANSIBLE_SSH_ARGS'] = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PreferredAuthentications=publickey'
         
         env.update(base_env)
         

@@ -12,7 +12,8 @@ import {
   message,
   Popconfirm,
   Switch,
-  Tooltip
+  Tooltip,
+  Spin
 } from 'antd';
 import {
   ClockCircleOutlined,
@@ -307,7 +308,7 @@ const Tasks = ({ currentUser }) => {
         if (record.status === 'pending') {
           return <Progress percent={0} size="small" />;
         } else if (record.status === 'running') {
-          return <Progress percent={50} size="small" status="active" />;
+          return <Spin size="small" />;
         } else if (record.status === 'completed') {
           return <Progress percent={100} size="small" />;
         } else if (record.status === 'failed') {
