@@ -2130,6 +2130,7 @@ def create_variable():
             key=data['key'].strip(),
             value=data['value'],
             description=data.get('description', ''),
+            is_secret=data.get('is_secret', False),
             user_id=current_user_id
         )
         
@@ -2160,6 +2161,8 @@ def update_variable(variable_id):
             variable.value = data['value']
         if 'description' in data:
             variable.description = data['description']
+        if 'is_secret' in data:
+            variable.is_secret = data['is_secret']
         
         db.session.commit()
         return jsonify(variable.to_dict())
@@ -2177,6 +2180,26 @@ def delete_variable(variable_id):
         return jsonify({'message': 'Variable deleted successfully'})
     except Exception as e:
         db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/variables/<variable_id>/reveal', methods=['GET'])
+@jwt_required()
+def reveal_variable(variable_id):
+    """Get a variable with its actual value (for editing secret variables)"""
+    try:
+        variable = Variable.query.get_or_404(variable_id)
+        return jsonify(variable.to_dict(hide_secret=False))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/variables/execution', methods=['GET'])
+@jwt_required()
+def get_variables_for_execution():
+    """Get variables with actual values for playbook execution (doesn't hide secret values)"""
+    try:
+        variables = Variable.query.order_by(Variable.key).all()
+        return jsonify([var.to_dict(hide_secret=False) for var in variables])
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 # History routes

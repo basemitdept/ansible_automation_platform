@@ -113,7 +113,7 @@ const PlaybookEditor = ({ currentUser }) => {
 
   const fetchGlobalVariables = async () => {
     try {
-      const response = await variablesAPI.getAll();
+      const response = await variablesAPI.getForExecution();
       setGlobalVariables(response.data);
     } catch (error) {
       message.error('Failed to fetch global variables');

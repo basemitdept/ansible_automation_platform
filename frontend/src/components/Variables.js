@@ -14,7 +14,8 @@ import {
   Tooltip,
   Row,
   Col,
-  theme
+  theme,
+  Switch
 } from 'antd';
 import {
   PlusOutlined,
@@ -22,7 +23,9 @@ import {
   DeleteOutlined,
   SettingOutlined,
   KeyOutlined,
-  UserOutlined
+  UserOutlined,
+  EyeOutlined,
+  EyeInvisibleOutlined
 } from '@ant-design/icons';
 import { variablesAPI } from '../services/api';
 import { hasPermission } from '../utils/permissions';
@@ -60,14 +63,26 @@ const Variables = ({ currentUser }) => {
     setModalVisible(true);
   };
 
-  const handleEdit = (variable) => {
-    setEditingVariable(variable);
-    form.setFieldsValue({
-      key: variable.key,
-      value: variable.value,
-      description: variable.description || ''
-    });
-    setModalVisible(true);
+  const handleEdit = async (variable) => {
+    try {
+      // If it's a secret variable, fetch the actual value
+      let variableData = variable;
+      if (variable.is_secret) {
+        const response = await variablesAPI.reveal(variable.id);
+        variableData = response.data;
+      }
+      
+      setEditingVariable(variableData);
+      form.setFieldsValue({
+        key: variableData.key,
+        value: variableData.value,
+        description: variableData.description || '',
+        is_secret: variableData.is_secret || false
+      });
+      setModalVisible(true);
+    } catch (error) {
+      message.error('Failed to load variable for editing');
+    }
   };
 
   const handleDelete = async (variableId) => {
@@ -116,22 +131,29 @@ const Variables = ({ currentUser }) => {
       dataIndex: 'value',
       key: 'value',
       width: 300,
-      render: (text) => (
-        <Text 
-          ellipsis={{ tooltip: text }} 
-          style={{ 
-            maxWidth: 280,
-            display: 'block',
-            fontFamily: 'monospace',
-            background: 'transparent',
-            color: token.colorTextSecondary,
-            padding: '2px 6px',
-            borderRadius: '4px',
-            fontWeight: '500'
-          }}
-        >
-          {text}
-        </Text>
+      render: (text, record) => (
+        <Space>
+          {record.is_secret && (
+            <Tag color="red" icon={<EyeInvisibleOutlined />}>
+              Secret
+            </Tag>
+          )}
+          <Text 
+            ellipsis={{ tooltip: text }} 
+            style={{ 
+              maxWidth: 200,
+              display: 'block',
+              fontFamily: 'monospace',
+              background: 'transparent',
+              color: record.is_secret ? token.colorError : token.colorTextSecondary,
+              padding: '2px 6px',
+              borderRadius: '4px',
+              fontWeight: '500'
+            }}
+          >
+            {text}
+          </Text>
+        </Space>
       ),
     },
     {
@@ -294,6 +316,18 @@ const Variables = ({ currentUser }) => {
             <TextArea
               rows={2}
               placeholder="e.g., Username for system operations, Main server IP address, Database connection name"
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Secret Variable"
+            name="is_secret"
+            valuePropName="checked"
+            extra="Secret variables will be hidden in the interface and show as '***HIDDEN***' to protect sensitive information like passwords and API keys"
+          >
+            <Switch 
+              checkedChildren="Secret" 
+              unCheckedChildren="Public"
             />
           </Form.Item>
 

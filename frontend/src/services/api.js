@@ -142,6 +142,8 @@ export const variablesAPI = {
   create: (data) => api.post('/variables', data),
   update: (id, data) => api.put(`/variables/${id}`, data),
   delete: (id) => api.delete(`/variables/${id}`),
+  reveal: (id) => api.get(`/variables/${id}/reveal`),
+  getForExecution: () => api.get('/variables/execution'),
 };
 
 export const webhooksAPI = {

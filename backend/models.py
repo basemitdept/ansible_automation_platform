@@ -771,18 +771,20 @@ class Variable(db.Model):
     key = db.Column(db.String(255), nullable=False, unique=True)  # Variable name/key
     value = db.Column(db.Text, nullable=False)  # Variable value
     description = db.Column(db.Text)  # Optional description
+    is_secret = db.Column(db.Boolean, default=False)  # Whether this variable should be hidden
     user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)  # Track who created the variable
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     user = db.relationship('User', backref='variables')  # User who created the variable
     
-    def to_dict(self):
+    def to_dict(self, hide_secret=True):
         return {
             'id': str(self.id),
             'key': self.key,
-            'value': self.value,
+            'value': '***HIDDEN***' if self.is_secret and hide_secret else self.value,
             'description': self.description,
+            'is_secret': self.is_secret,
             'user_id': str(self.user_id) if self.user_id else None,
             'created_at': self.created_at.isoformat() + 'Z',
             'updated_at': self.updated_at.isoformat() + 'Z',

@@ -197,7 +197,7 @@ const Playbooks = ({ currentUser }) => {
 
   const fetchGlobalVariables = async () => {
     try {
-      const response = await variablesAPI.getAll();
+      const response = await variablesAPI.getForExecution();
       setGlobalVariables(response.data);
     } catch (error) {
       console.error('Failed to fetch global variables:', error);
