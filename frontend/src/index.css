@@ -107,3 +107,212 @@ code {
 .login-dark .ant-input-password .ant-input::placeholder {
   color: rgba(255,255,255,0.55) !important;
 }
+
+/* Clean Select Dropdown Styles - Only Visual, No Behavior Interference */
+.ant-select-dropdown {
+  background: #2d2d2d !important;
+  border: 1px solid #4a4a4a !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Dropdown Menu Container with Scroll */
+.ant-select-dropdown .ant-select-dropdown-menu {
+  max-height: 300px !important;
+  overflow-y: auto !important;
+  padding: 4px 0 !important;
+}
+
+/* Custom Scrollbar for Dropdown */
+.ant-select-dropdown .ant-select-dropdown-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.ant-select-dropdown .ant-select-dropdown-menu::-webkit-scrollbar-track {
+  background: #1a1a1a;
+  border-radius: 4px;
+  margin: 4px 0;
+}
+
+.ant-select-dropdown .ant-select-dropdown-menu::-webkit-scrollbar-thumb {
+  background: #4a4a4a;
+  border-radius: 4px;
+  border: 1px solid #2d2d2d;
+}
+
+.ant-select-dropdown .ant-select-dropdown-menu::-webkit-scrollbar-thumb:hover {
+  background: #5a5a5a;
+}
+
+/* Dropdown Options - Minimal Styling */
+.ant-select-dropdown .ant-select-item {
+  color: #e5e7eb !important;
+  background: transparent !important;
+  border-radius: 4px !important;
+  margin: 2px 8px !important;
+  padding: 8px 12px !important;
+  font-size: 14px !important;
+  line-height: 1.4 !important;
+}
+
+.ant-select-dropdown .ant-select-item:hover {
+  background: rgba(59, 130, 246, 0.1) !important;
+  color: #3b82f6 !important;
+}
+
+.ant-select-dropdown .ant-select-item-option-selected {
+  background: rgba(59, 130, 246, 0.2) !important;
+  color: #3b82f6 !important;
+  font-weight: 500 !important;
+}
+
+.ant-select-dropdown .ant-select-item-option-active {
+  background: rgba(59, 130, 246, 0.15) !important;
+  color: #3b82f6 !important;
+}
+
+/* Empty State */
+.ant-select-dropdown .ant-select-dropdown-menu .ant-select-item-empty {
+  color: #9ca3af !important;
+  font-style: italic !important;
+  text-align: center !important;
+  padding: 16px !important;
+}
+
+/* Multiple Selection Tags */
+.ant-select-multiple .ant-select-selection-item {
+  background: rgba(59, 130, 246, 0.2) !important;
+  border: 1px solid rgba(59, 130, 246, 0.3) !important;
+  border-radius: 6px !important;
+  color: #3b82f6 !important;
+  font-size: 12px !important;
+  padding: 2px 8px !important;
+  margin: 2px 4px 2px 0 !important;
+  max-width: 200px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.ant-select-multiple .ant-select-selection-item:hover {
+  background: rgba(59, 130, 246, 0.3) !important;
+  border-color: rgba(59, 130, 246, 0.5) !important;
+}
+
+.ant-select-multiple .ant-select-selection-item-remove {
+  color: #3b82f6 !important;
+  margin-left: 4px !important;
+  transition: color 0.2s ease !important;
+}
+
+.ant-select-multiple .ant-select-selection-item-remove:hover {
+  color: #ef4444 !important;
+}
+
+/* Select Arrow */
+.ant-select-arrow {
+  color: #9ca3af !important;
+  transition: all 0.2s ease !important;
+}
+
+.ant-select-open .ant-select-arrow {
+  color: #3b82f6 !important;
+  transform: rotate(180deg) !important;
+}
+
+/* Select Placeholder */
+.ant-select-selection-placeholder {
+  color: #9ca3af !important;
+  font-style: italic !important;
+}
+
+/* Select Input */
+.ant-select-selection-search-input {
+  color: #e5e7eb !important;
+}
+
+/* Disabled State */
+.ant-select-disabled .ant-select-selector {
+  background: #1f1f1f !important;
+  border-color: #2d2d2d !important;
+  color: #6b7280 !important;
+}
+
+.ant-select-disabled .ant-select-arrow {
+  color: #6b7280 !important;
+}
+
+/* Loading State */
+.ant-select-dropdown .ant-select-dropdown-loading {
+  color: #3b82f6 !important;
+  text-align: center !important;
+  padding: 16px !important;
+}
+
+/* Search Input in Dropdown */
+.ant-select-dropdown .ant-select-dropdown-search {
+  padding: 8px 12px !important;
+}
+
+.ant-select-dropdown .ant-select-dropdown-search .ant-input {
+  background: #1f1f1f !important;
+  border: 1px solid #4a4a4a !important;
+  color: #e5e7eb !important;
+  border-radius: 4px !important;
+}
+
+.ant-select-dropdown .ant-select-dropdown-search .ant-input:focus,
+.ant-select-dropdown .ant-select-dropdown-search .ant-input:hover {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1) !important;
+}
+
+/* Responsive Design for Mobile */
+@media (max-width: 768px) {
+  .ant-select-dropdown .ant-select-dropdown-menu {
+    max-height: 250px !important;
+  }
+  
+  .ant-select-multiple .ant-select-selection-item {
+    max-width: 150px !important;
+    font-size: 11px !important;
+  }
+}
+
+/* Group Headers in Dropdown */
+.ant-select-dropdown .ant-select-item-group {
+  color: #9ca3af !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  padding: 8px 12px 4px !important;
+  background: rgba(0, 0, 0, 0.1) !important;
+  border-bottom: 1px solid #4a4a4a !important;
+}
+
+/* Divider in Dropdown */
+.ant-select-dropdown .ant-select-item-divider {
+  background: #4a4a4a !important;
+  margin: 4px 0 !important;
+}
+
+/* Responsive Select Improvements */
+@media (max-width: 480px) {
+  .ant-select-dropdown {
+    max-width: calc(100vw - 32px) !important;
+    left: 16px !important;
+    right: 16px !important;
+  }
+  
+  .ant-select-multiple .ant-select-selection-item {
+    max-width: 120px !important;
+    font-size: 10px !important;
+    padding: 1px 4px !important;
+  }
+  
+  .ant-select-dropdown .ant-select-item {
+    padding: 6px 8px !important;
+    font-size: 13px !important;
+  }
+}

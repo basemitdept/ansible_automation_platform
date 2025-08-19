@@ -1200,8 +1200,8 @@ def create_host():
         
         # Simple insert with timestamp columns
         query = """
-            INSERT INTO hosts (id, name, hostname, description, group_id, created_at, updated_at) 
-            VALUES (:id, :name, :hostname, :description, :group_id, :created_at, :updated_at)
+            INSERT INTO hosts (id, name, hostname, description, group_id, os_type, port, created_at, updated_at) 
+            VALUES (:id, :name, :hostname, :description, :group_id, :os_type, :port, :created_at, :updated_at)
         """
         
         current_time = datetime.utcnow()
@@ -1211,6 +1211,8 @@ def create_host():
             'hostname': data['hostname'],
             'description': description,
             'group_id': data.get('group_id'),
+            'os_type': os_type,
+            'port': port,
             'created_at': current_time,
             'updated_at': current_time
         }

@@ -90,6 +90,21 @@ const cyberBlueTheme = {
     Select: {
       colorBgContainer: '#3a3a3a',
       optionSelectedBg: 'rgba(59, 130, 246, 0.25)',
+      colorBorder: '#4a4a4a',
+      colorPrimaryHover: '#60a5fa',
+      colorPrimary: '#3b82f6',
+      borderRadius: 6,
+      controlHeight: 40,
+      fontSize: 14,
+      optionActiveBg: 'rgba(59, 130, 246, 0.15)',
+      optionHoverBg: 'rgba(59, 130, 246, 0.1)',
+      multipleItemBg: 'rgba(59, 130, 246, 0.2)',
+      multipleItemBorderColor: 'rgba(59, 130, 246, 0.3)',
+      multipleItemColor: '#3b82f6',
+      multipleItemHoverBg: 'rgba(59, 130, 246, 0.3)',
+      // Ensure proper dropdown behavior
+      dropdownHeight: 300,
+      zIndexPopup: 1050,
     },
     Button: {
       defaultBg: '#3a3a3a',
