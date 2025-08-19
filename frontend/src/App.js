@@ -64,8 +64,11 @@ const cyberBlueTheme = {
       itemBg: 'transparent',
       itemSelectedBg: 'rgba(59, 130, 246, 0.25)',
       itemSelectedColor: '#3b82f6',
-      itemHoverBg: 'rgba(255, 255, 255, 0.08)',
+      itemHoverBg: 'rgba(59, 130, 246, 0.1)',
       itemActiveBg: 'rgba(59, 130, 246, 0.15)',
+      colorBgContainer: '#000000',
+      colorText: '#ffffff',
+      colorTextDescription: '#cccccc',
     },
     Card: {
       colorBgContainer: '#2d2d2d',
@@ -333,7 +336,7 @@ function App() {
           onCollapse={setCollapsed}
           width={250}
           style={{
-            background: colorBgContainer,
+            background: '#000000',
             position: 'fixed',
             left: 0,
             top: 0,
@@ -345,22 +348,27 @@ function App() {
           <div style={{ 
             height: 64, 
             margin: 16, 
-            background: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.2)',
+            background: 'rgba(59, 130, 246, 0.2)',
             borderRadius: 6,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#1890ff',
+            color: '#3b82f6',
+            border: '1px solid rgba(59, 130, 246, 0.3)'
           }}>
             <RocketOutlined style={{ fontSize: '32px' }} />
           </div>
           <Menu
-            theme={isDarkMode ? "dark" : "light"}
+            theme="dark"
             mode="inline"
             selectedKeys={[location.pathname]}
             items={getMenuItems()}
             onClick={handleMenuClick}
-            style={{ borderRight: 0 }}
+            style={{ 
+              borderRight: 0,
+              background: '#000000',
+              color: '#ffffff'
+            }}
           />
         </Sider>
         <Layout style={{ marginLeft: collapsed ? 80 : 250 }}>
