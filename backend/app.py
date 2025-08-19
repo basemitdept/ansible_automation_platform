@@ -508,11 +508,13 @@ def delete_user(user_id):
 
 # Playbook routes
 @app.route('/api/playbooks', methods=['GET'])
+@jwt_required()
 def get_playbooks():
     playbooks = Playbook.query.all()
     return jsonify([pb.to_dict() for pb in playbooks])
 
 @app.route('/api/playbooks', methods=['POST'])
+@require_permission('create')
 def create_playbook():
     try:
         data = request.json
@@ -606,6 +608,7 @@ def create_playbook():
         return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
 
 @app.route('/api/playbooks/<playbook_id>', methods=['PUT'])
+@require_permission('edit')
 def update_playbook(playbook_id):
     playbook = Playbook.query.get_or_404(playbook_id)
     data = request.json
@@ -824,6 +827,7 @@ def git_import_playbook():
 
 # Playbook File routes
 @app.route('/api/playbooks/<playbook_id>/files', methods=['GET'])
+@jwt_required()
 def get_playbook_files(playbook_id):
     """Get all files associated with a playbook"""
     playbook = Playbook.query.get_or_404(playbook_id)
@@ -831,6 +835,7 @@ def get_playbook_files(playbook_id):
     return jsonify([file.to_dict() for file in files])
 
 @app.route('/api/playbooks/<playbook_id>/files', methods=['POST'])
+@require_permission('edit')
 def upload_playbook_file(playbook_id):
     """Upload a file for a playbook"""
     print(f"🔺 File upload request for playbook {playbook_id}")
@@ -923,6 +928,7 @@ def upload_playbook_file(playbook_id):
         return jsonify({'error': f'Failed to upload file: {str(e)}'}), 500
 
 @app.route('/api/playbooks/<playbook_id>/files/<file_id>', methods=['DELETE'])
+@require_permission('delete')
 def delete_playbook_file(playbook_id, file_id):
     """Delete a playbook file"""
     playbook_file = PlaybookFile.query.filter_by(id=file_id, playbook_id=playbook_id).first_or_404()
@@ -943,6 +949,7 @@ def delete_playbook_file(playbook_id, file_id):
         return jsonify({'error': f'Failed to delete file: {str(e)}'}), 500
 
 @app.route('/api/playbooks/<playbook_id>/files/<file_id>/download', methods=['GET'])
+@jwt_required()
 def download_playbook_file(playbook_id, file_id):
     """Download a playbook file"""
     playbook_file = PlaybookFile.query.filter_by(id=file_id, playbook_id=playbook_id).first_or_404()
@@ -961,6 +968,7 @@ def download_playbook_file(playbook_id, file_id):
 
 # Migration endpoint to add missing columns
 @app.route('/api/migrate-hosts', methods=['POST'])
+@require_permission('admin')
 def migrate_hosts():
     try:
         # Check if os_type and port columns exist
@@ -1068,6 +1076,7 @@ def health_check():
 
 # Host Group routes
 @app.route('/api/host-groups', methods=['GET'])
+@jwt_required()
 def get_host_groups():
     try:
         # Test database connection first
@@ -1082,6 +1091,7 @@ def get_host_groups():
         return jsonify({'error': 'Failed to fetch host groups', 'details': str(e)}), 500
 
 @app.route('/api/host-groups', methods=['POST'])
+@require_permission('create')
 def create_host_group():
     try:
         data = request.json
@@ -1115,6 +1125,7 @@ def create_host_group():
         return jsonify({'error': f'Failed to create host group: {str(e)}'}), 400
 
 @app.route('/api/host-groups/<group_id>', methods=['PUT'])
+@require_permission('edit')
 def update_host_group(group_id):
     try:
         group = HostGroup.query.get_or_404(group_id)
@@ -1146,6 +1157,7 @@ def update_host_group(group_id):
         return jsonify({'error': f'Failed to update host group: {str(e)}'}), 400
 
 @app.route('/api/host-groups/<group_id>', methods=['DELETE'])
+@require_permission('delete')
 def delete_host_group(group_id):
     group = HostGroup.query.get_or_404(group_id)
     
@@ -1161,6 +1173,7 @@ def delete_host_group(group_id):
 
 # Host routes
 @app.route('/api/hosts', methods=['GET'])
+@jwt_required()
 def get_hosts():
     try:
         # Test database connection first
@@ -1179,6 +1192,7 @@ def get_hosts():
         return jsonify({'error': 'Failed to fetch hosts', 'details': str(e)}), 500
 
 @app.route('/api/hosts', methods=['POST'])
+@require_permission('create')
 def create_host():
     data = request.json
     print(f"Creating host with data: {data}")
@@ -1242,6 +1256,7 @@ def create_host():
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/hosts/bulk', methods=['POST'])
+@require_permission('create')
 def create_hosts_bulk():
     data = request.json
     ips = data.get('ips', [])
@@ -1805,16 +1820,19 @@ def test_execution_history(task_id):
 
 # Task routes
 @app.route('/api/tasks', methods=['GET'])
+@jwt_required()
 def get_tasks():
     tasks = Task.query.filter(Task.status.in_(['pending', 'running'])).all()
     return jsonify([task.to_dict() for task in tasks])
 
 @app.route('/api/tasks/<task_id>', methods=['GET'])
+@jwt_required()
 def get_task(task_id):
     task = Task.query.get_or_404(task_id)
     return jsonify(task.to_dict())
 
 @app.route('/api/tasks/<task_id>', methods=['DELETE'])
+@require_permission('delete')
 def delete_task(task_id):
     try:
         task = Task.query.get(task_id)
@@ -1908,6 +1926,7 @@ def terminate_webhook_task(task_id):
 
 # Artifacts routes
 @app.route('/api/artifacts/<execution_id>', methods=['GET'])
+@jwt_required()
 def get_artifacts(execution_id):
     print(f"API: Fetching artifacts for execution_id: {execution_id}")
     
@@ -1978,6 +1997,7 @@ def get_artifacts(execution_id):
         })
 
 @app.route('/api/artifacts/<artifact_id>/data', methods=['GET'])
+@jwt_required()
 def get_artifact_data(artifact_id):
     artifact = Artifact.query.get_or_404(artifact_id)
     return jsonify({
@@ -1987,6 +2007,7 @@ def get_artifact_data(artifact_id):
 
 # Credentials API endpoints
 @app.route('/api/credentials', methods=['GET'])
+@jwt_required()
 def get_credentials():
     try:
         credentials = Credential.query.all()
@@ -1995,6 +2016,7 @@ def get_credentials():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/credentials', methods=['POST'])
+@require_permission('create')
 def create_credential():
     try:
         data = request.get_json()
@@ -2035,6 +2057,7 @@ def create_credential():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/credentials/<credential_id>', methods=['PUT'])
+@require_permission('edit')
 def update_credential(credential_id):
     try:
         credential = Credential.query.get_or_404(credential_id)
@@ -2061,6 +2084,7 @@ def update_credential(credential_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/credentials/<credential_id>', methods=['DELETE'])
+@require_permission('delete')
 def delete_credential(credential_id):
     try:
         credential = Credential.query.get_or_404(credential_id)
@@ -2072,6 +2096,7 @@ def delete_credential(credential_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/credentials/<credential_id>/password', methods=['GET'])
+@require_permission('read')
 def get_credential_password(credential_id):
     try:
         credential = Credential.query.get_or_404(credential_id)
@@ -2081,6 +2106,7 @@ def get_credential_password(credential_id):
 
 # Variables API endpoints
 @app.route('/api/variables', methods=['GET'])
+@jwt_required()
 def get_variables():
     try:
         variables = Variable.query.order_by(Variable.key).all()
@@ -2155,6 +2181,7 @@ def delete_variable(variable_id):
 
 # History routes
 @app.route('/api/history', methods=['GET'])
+@jwt_required()
 def get_history():
     # Get pagination parameters
     page = request.args.get('page', 1, type=int)
@@ -2228,6 +2255,7 @@ def get_history():
     })
 
 @app.route('/api/history/stats', methods=['GET'])
+@jwt_required()
 def get_history_stats():
     """Get execution history statistics without heavy data - for dashboard"""
     try:
@@ -2256,6 +2284,7 @@ def get_history_stats():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/history/<history_id>', methods=['GET'])
+@jwt_required()
 def get_history_by_id(history_id):
     """Get single execution history with full details (including output)"""
     try:
@@ -2280,6 +2309,7 @@ def get_history_by_id(history_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/history/<history_id>', methods=['DELETE'])
+@require_permission('delete')
 def delete_history(history_id):
     try:
         history = ExecutionHistory.query.get(history_id)
@@ -2302,6 +2332,7 @@ def delete_history(history_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/history/<history_id>/refresh-output', methods=['POST'])
+@require_permission('edit')
 def refresh_execution_output(history_id):
     """Force refresh execution output by checking original task"""
     try:
@@ -2645,6 +2676,7 @@ def execute_playbook():
 
 # Webhook API endpoints
 @app.route('/api/webhooks', methods=['GET'])
+@jwt_required()
 def get_webhooks():
     webhooks = Webhook.query.all()
     return jsonify([webhook.to_dict() for webhook in webhooks])
@@ -2691,6 +2723,7 @@ def create_webhook():
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/webhooks/<webhook_id>', methods=['PUT'])
+@require_permission('edit')
 def update_webhook(webhook_id):
     webhook = Webhook.query.get_or_404(webhook_id)
     data = request.json
@@ -2723,6 +2756,7 @@ def update_webhook(webhook_id):
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/webhooks/<webhook_id>', methods=['DELETE'])
+@require_permission('delete')
 def delete_webhook(webhook_id):
     webhook = Webhook.query.get_or_404(webhook_id)
     
@@ -2735,6 +2769,7 @@ def delete_webhook(webhook_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/webhooks/<webhook_id>/regenerate-token', methods=['POST'])
+@require_permission('edit')
 def regenerate_webhook_token(webhook_id):
     webhook = Webhook.query.get_or_404(webhook_id)
     
@@ -5943,11 +5978,13 @@ def run_ansible_playbook(task_id, playbook, host, username, password, variables=
 
 # API Token endpoints
 @app.route('/api/tokens', methods=['GET'])
+@jwt_required()
 def get_api_tokens():
     tokens = ApiToken.query.order_by(ApiToken.created_at.desc()).all()
     return jsonify([token.to_dict() for token in tokens])
 
 @app.route('/api/tokens', methods=['POST'])
+@require_permission('create')
 def create_api_token():
     data = request.json
     
@@ -5971,6 +6008,7 @@ def create_api_token():
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/tokens/<token_id>', methods=['PUT'])
+@require_permission('edit')
 def update_api_token(token_id):
     api_token = ApiToken.query.get_or_404(token_id)
     data = request.json
@@ -5994,6 +6032,7 @@ def update_api_token(token_id):
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/tokens/<token_id>', methods=['DELETE'])
+@require_permission('delete')
 def delete_api_token(token_id):
     api_token = ApiToken.query.get_or_404(token_id)
     
@@ -6006,6 +6045,7 @@ def delete_api_token(token_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/tokens/<token_id>/regenerate', methods=['POST'])
+@require_permission('edit')
 def regenerate_api_token(token_id):
     api_token = ApiToken.query.get_or_404(token_id)
     

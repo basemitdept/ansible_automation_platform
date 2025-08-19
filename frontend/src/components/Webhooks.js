@@ -758,7 +758,13 @@ const Webhooks = ({ currentUser }) => {
             name="playbook_id"
             rules={[{ required: true, message: 'Please select a playbook' }]}
           >
-            <Select placeholder="Select playbook to execute">
+            <Select 
+              placeholder="Select playbook to execute"
+              showSearch
+              filterOption={(input, option) =>
+                option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
+              }
+            >
               {playbooks.map(playbook => (
                 <Option key={playbook.id} value={playbook.id}>
                   {playbook.name}
