@@ -334,6 +334,12 @@ function App() {
           width={250}
           style={{
             background: colorBgContainer,
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            zIndex: 1000,
+            overflow: 'auto'
           }}
         >
           <div style={{ 
@@ -357,7 +363,7 @@ function App() {
             style={{ borderRight: 0 }}
           />
         </Sider>
-        <Layout>
+        <Layout style={{ marginLeft: collapsed ? 80 : 250 }}>
           <Header
             style={{
               padding: '0 24px',
@@ -365,7 +371,10 @@ function App() {
               borderBottom: `1px solid ${colorBorder}`,
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'space-between'
+              justifyContent: 'space-between',
+              position: 'sticky',
+              top: 0,
+              zIndex: 999
             }}
           >
             <h2 style={{ margin: 0, color: colorText }}>
@@ -402,7 +411,8 @@ function App() {
               margin: 0,
               padding: 24,
               background: isDarkMode ? cyberBlueTheme.token.colorBgLayout : '#f0f2f5',
-              overflow: 'auto'
+              overflow: 'auto',
+              minHeight: 'calc(100vh - 64px)'
             }}
           >
             <Routes>
