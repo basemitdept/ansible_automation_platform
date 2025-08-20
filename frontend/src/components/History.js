@@ -291,7 +291,7 @@ const History = () => {
   const getStatusIcon = (status) => {
     switch (status) {
       case 'running':
-        return <PlayCircleOutlined style={{ color: '#1890ff' }} />;
+        return <PlayCircleOutlined style={{ color: '#3b82f6' }} />;
       case 'completed':
         return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
       case 'partial':
@@ -299,7 +299,7 @@ const History = () => {
       case 'failed':
         return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />;
       case 'terminated':
-        return <StopOutlined style={{ color: '#ff7875' }} />;
+        return <StopOutlined style={{ color: '#ff4d4f' }} />;
       default:
         return <PlayCircleOutlined />;
     }
@@ -736,7 +736,7 @@ const History = () => {
         return (
           <Space>
             {icon}
-            <span style={{ color: record.executed_by_type === 'webhook' ? '#1890ff' : 'inherit' }}>
+                                    <span style={{ color: record.executed_by_type === 'webhook' ? '#3b82f6' : 'inherit' }}>
               {name}
             </span>
           </Space>
@@ -889,7 +889,7 @@ const History = () => {
             </div>
           )}
           {!hasMore && filteredHistory.length > 0 && (
-            <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+            <div style={{ textAlign: 'center', padding: '20px', color: 'rgba(200, 200, 200, 0.85)' }}>
               <Text type="secondary">All {filteredHistory.length} records loaded</Text>
             </div>
           )}
@@ -924,7 +924,7 @@ const History = () => {
                     const validHosts = hosts.filter(host => host);
                     
                     if (validHosts.length === 0) {
-                      return <span style={{ color: '#999' }}>No hosts</span>;
+                      return <span style={{ color: 'rgba(200, 200, 200, 0.85)' }}>No hosts</span>;
                     }
                     
                     if (validHosts.length === 1) {
@@ -941,10 +941,21 @@ const History = () => {
                         <div style={{ marginBottom: 4 }}>
                           <Tag color="blue">{validHosts.length} hosts</Tag>
                         </div>
-                        <div style={{ maxHeight: '120px', overflowY: 'auto', border: '1px solid #d9d9d9', borderRadius: '6px', padding: '8px', backgroundColor: '#fafafa' }}>
+                        <div 
+                          className="hosts-box"
+                          style={{ 
+                            maxHeight: '120px', 
+                            overflowY: 'auto', 
+                            border: '2px solid #4a4a4a', 
+                            borderRadius: '6px', 
+                            padding: '8px', 
+                            backgroundColor: '#2d2d2d',
+                            color: '#ffffff'
+                          }}
+                        >
                           {validHosts.map((host, index) => (
-                            <div key={index} style={{ fontSize: '12px', marginBottom: '4px', padding: '2px 0' }}>
-                              <span style={{ fontWeight: '500' }}>{host.name}</span> <code>({host.hostname})</code>
+                            <div key={index} style={{ fontSize: '12px', marginBottom: '4px', padding: '2px 0', color: '#ffffff' }}>
+                              <span style={{ fontWeight: '500', color: '#ffffff' }}>{host.name}</span> <code style={{ color: '#ffffff', backgroundColor: 'transparent' }}>({host.hostname})</code>
                             </div>
                           ))}
                         </div>
@@ -961,7 +972,7 @@ const History = () => {
                       const icon = selectedExecution.executed_by_type === 'webhook' ? <ApiOutlined /> : <UserOutlined />;
                       const name = selectedExecution.user?.username || 'Unknown';
                       return (
-                        <span style={{ color: selectedExecution.executed_by_type === 'webhook' ? '#1890ff' : 'inherit' }}>
+                        <span style={{ color: selectedExecution.executed_by_type === 'webhook' ? '#3b82f6' : 'inherit' }}>
                           {icon} {name}
                         </span>
                       );
@@ -1080,7 +1091,7 @@ const History = () => {
                 {outputLoading ? (
                   <div style={{ textAlign: 'center', padding: '40px' }}>
                     <Spin size="large" />
-                    <div style={{ marginTop: 16, color: '#666' }}>
+                    <div style={{ marginTop: 16, color: 'var(--ant-color-text-secondary)' }}>
                       {autoRefreshing ? 'Auto-refreshing missing output...' : 'Loading execution output...'}
                     </div>
                   </div>
@@ -1108,7 +1119,7 @@ const History = () => {
                     
                     {selectedExecution?.error_output && (
                       <div style={{ marginTop: 16 }}>
-                        <Text strong style={{ color: '#ff4d4f' }}>Error Output:</Text>
+                        <Text strong style={{ color: 'var(--ant-color-error)' }}>Error Output:</Text>
                         <div
                           ref={errorOutputRef}
                           style={{
@@ -1131,7 +1142,7 @@ const History = () => {
                     )}
                     
                     {!selectedExecution?.output && !selectedExecution?.error_output && (
-                      <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                      <div style={{ textAlign: 'center', padding: '40px', color: 'var(--ant-color-text-secondary)' }}>
                         <div>No console output available for this execution</div>
                         <div style={{ marginTop: 8, fontSize: '12px' }}>
                           {selectedExecution?.status === 'running' ? (
@@ -1151,7 +1162,7 @@ const History = () => {
                           )}
                         </div>
                         {selectedExecution?.status && (
-                          <div style={{ marginTop: 12, fontSize: '11px', color: '#999' }}>
+                          <div style={{ marginTop: 12, fontSize: '11px', color: 'var(--ant-color-text-tertiary)' }}>
                             Execution Status: {selectedExecution.status}
                           </div>
                         )}
@@ -1183,10 +1194,10 @@ const History = () => {
                 {artifactsLoading ? (
                   <div style={{ textAlign: 'center', padding: '40px' }}>
                     <Spin size="large" />
-                    <div style={{ marginTop: 16, color: '#666' }}>Loading register variables...</div>
+                    <div style={{ marginTop: 16, color: 'var(--ant-color-text-secondary)' }}>Loading register variables...</div>
                   </div>
                 ) : artifacts.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                  <div style={{ textAlign: 'center', padding: '40px', color: 'var(--ant-color-text-secondary)' }}>
                     <div>No register variables found for this execution</div>
                   </div>
                 ) : (
@@ -1274,8 +1285,8 @@ const History = () => {
                                     <div style={{ marginBottom: 12 }}>
                                       <Text strong>Message:</Text>
                                       <div style={{
-                                        backgroundColor: failed ? '#fff2f0' : changed ? '#fff7e6' : '#f6ffed',
-                                        border: failed ? '1px solid #ffccc7' : changed ? '1px solid #ffd591' : '1px solid #b7eb8f',
+                                        backgroundColor: failed ? 'var(--ant-color-error-bg)' : changed ? 'var(--ant-color-warning-bg)' : 'var(--ant-color-success-bg)',
+                                        border: failed ? '1px solid var(--ant-color-error-border)' : changed ? '1px solid var(--ant-color-warning-border)' : '1px solid var(--ant-color-success-border)',
                                         borderRadius: '6px',
                                         padding: '12px',
                                         marginTop: '4px',
@@ -1284,7 +1295,7 @@ const History = () => {
                                         fontSize: '14px'
                                       }}>
                                         <span style={{ 
-                                          color: failed ? '#cf1322' : changed ? '#d46b08' : '#389e0d',
+                                          color: failed ? 'var(--ant-color-error)' : changed ? 'var(--ant-color-warning)' : 'var(--ant-color-success)',
                                           fontWeight: '500',
                                           display: 'block',
                                           wordBreak: 'break-word'
@@ -1300,9 +1311,9 @@ const History = () => {
                                     <div style={{ marginBottom: 12 }}>
                                       <Text strong>Output:</Text>
                                       <pre style={{
-                                        backgroundColor: '#f6f8fa',
-                                        color: '#24292e',
-                                        border: '1px solid #e1e4e8',
+                                        backgroundColor: 'var(--ant-color-bg-container)',
+                                        color: 'var(--ant-color-text)',
+                                        border: '1px solid var(--ant-color-border)',
                                         borderRadius: '6px',
                                         padding: '12px',
                                         marginTop: '4px',
@@ -1321,10 +1332,10 @@ const History = () => {
                                   {/* Error output */}
                                   {stderr && (
                                     <div style={{ marginBottom: 12 }}>
-                                      <Text strong style={{ color: '#cf1322' }}>Error Output:</Text>
+                                      <Text strong style={{ color: 'var(--ant-color-error)' }}>Error Output:</Text>
                                       <pre style={{
-                                        backgroundColor: '#fff2f0',
-                                        border: '1px solid #ffccc7',
+                                        backgroundColor: 'var(--ant-color-error-bg)',
+                                        border: '1px solid var(--ant-color-error-border)',
                                         borderRadius: '6px',
                                         padding: '12px',
                                         marginTop: '4px',
@@ -1334,7 +1345,7 @@ const History = () => {
                                         overflow: 'auto',
                                         whiteSpace: 'pre-wrap',
                                         lineHeight: '1.45',
-                                        color: '#cf1322'
+                                        color: 'var(--ant-color-error)'
                                       }}>
                                         {stderr}
                                       </pre>
@@ -1367,15 +1378,15 @@ const History = () => {
                                   <Collapse size="small" ghost>
                                     <Collapse.Panel header="View Full JSON Data" key="json">
                                       <pre style={{
-                                        backgroundColor: '#f8f9fa',
-                                        color: '#212529',
+                                        backgroundColor: 'var(--ant-color-bg-container)',
+                                        color: 'var(--ant-color-text)',
                                         padding: '16px',
                                         borderRadius: '6px',
                                         fontSize: '13px',
                                         fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
                                         maxHeight: '400px',
                                         overflow: 'auto',
-                                        border: '1px solid #dee2e6',
+                                        border: '1px solid var(--ant-color-border)',
                                         whiteSpace: 'pre-wrap',
                                         lineHeight: '1.45',
                                         margin: 0
@@ -1401,7 +1412,7 @@ const History = () => {
                                     fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
                                     maxHeight: '400px',
                                     overflow: 'auto',
-                                    border: '1px solid #dee2e6',
+                                    border: '1px solid var(--ant-color-border)',
                                     whiteSpace: 'pre-wrap',
                                     lineHeight: '1.45',
                                     margin: 0
@@ -1470,7 +1481,7 @@ const History = () => {
                                   <strong>Description:</strong> {host.description}
                                 </div>
                               )}
-                              <div style={{ fontSize: '12px', color: '#666' }}>
+                              <div style={{ fontSize: '12px', color: 'var(--ant-color-text-secondary)' }}>
                                 <strong>Added:</strong> {new Date(host.created_at).toLocaleString()}
                               </div>
                             </div>
@@ -1480,8 +1491,8 @@ const History = () => {
                     )}
                   />
                 ) : (
-                  <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
-                    <DatabaseOutlined style={{ fontSize: '48px', marginBottom: '16px', color: '#d9d9d9' }} />
+                  <div style={{ textAlign: 'center', padding: '40px', color: 'var(--ant-color-text-secondary)' }}>
+                    <DatabaseOutlined style={{ fontSize: '48px', marginBottom: '16px', color: 'var(--ant-color-text-tertiary)' }} />
                     <div>No host information available for this execution</div>
                   </div>
                 )}
