@@ -943,8 +943,8 @@ const History = () => {
                         </div>
                         <div style={{ maxHeight: '120px', overflowY: 'auto', border: '1px solid #d9d9d9', borderRadius: '6px', padding: '8px', backgroundColor: '#fafafa' }}>
                           {validHosts.map((host, index) => (
-                            <div key={index} style={{ fontSize: '12px', marginBottom: '4px', padding: '2px 0' }}>
-                              <span style={{ fontWeight: '500' }}>{host.name}</span> <code>({host.hostname})</code>
+                            <div key={index} style={{ fontSize: '12px', marginBottom: '4px', padding: '2px 0', color: '#333' }}>
+                              <span style={{ fontWeight: '500', color: '#333' }}>{host.name}</span> <code style={{ color: '#666' }}>({host.hostname})</code>
                             </div>
                           ))}
                         </div>

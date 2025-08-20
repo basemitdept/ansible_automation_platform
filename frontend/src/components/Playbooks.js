@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Card,
   Table,
@@ -36,7 +37,8 @@ import {
   InboxOutlined,
   GitlabOutlined,
   GithubOutlined,
-  BranchesOutlined
+  BranchesOutlined,
+  PlayCircleOutlined
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { playbooksAPI, playbookFilesAPI, credentialsAPI, variablesAPI } from '../services/api';
@@ -48,6 +50,7 @@ const { TextArea } = Input;
 const { Dragger } = Upload;
 
 const Playbooks = ({ currentUser }) => {
+  const navigate = useNavigate();
   const { token } = theme.useToken();
   const [playbooks, setPlaybooks] = useState([]);
   const [filteredPlaybooks, setFilteredPlaybooks] = useState([]);
@@ -386,6 +389,16 @@ const Playbooks = ({ currentUser }) => {
     if (playbook.id) {
       fetchPlaybookFiles(playbook.id);
     }
+  };
+
+  const handlePlay = (playbook) => {
+    // Navigate to the playbook editor with the selected playbook
+    navigate('/editor', { 
+      state: { 
+        selectedPlaybookId: playbook.id,
+        selectedPlaybook: playbook 
+      } 
+    });
   };
 
   const handleDelete = async (id) => {
@@ -819,6 +832,13 @@ const Playbooks = ({ currentUser }) => {
       width: 120,
       render: (_, record) => (
         <Space>
+          <Button
+            type="text"
+            icon={<PlayCircleOutlined />}
+            onClick={() => handlePlay(record)}
+            title="Run Playbook"
+            style={{ color: '#52c41a' }}
+          />
           {hasPermission(currentUser, 'edit') ? (
             <Button
               type="text"

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Card,
   Row,
@@ -38,6 +38,7 @@ const { Option } = Select;
 
 const PlaybookEditor = ({ currentUser }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [playbooks, setPlaybooks] = useState([]);
   const [hosts, setHosts] = useState([]);
   const [hostGroups, setHostGroups] = useState([]);
@@ -64,6 +65,26 @@ const PlaybookEditor = ({ currentUser }) => {
     fetchCredentials();
     fetchGlobalVariables();
   }, []);
+
+  // Handle pre-selected playbook from navigation
+  useEffect(() => {
+    if (location.state?.selectedPlaybook) {
+      const preSelectedPlaybook = location.state.selectedPlaybook;
+      setSelectedPlaybook(preSelectedPlaybook);
+      setEditorContent(preSelectedPlaybook.content || '');
+      
+      // Set assigned variables if any
+      if (preSelectedPlaybook.assigned_variables) {
+        setSelectedVariables(preSelectedPlaybook.assigned_variables);
+      }
+      
+      // Extract variables from content
+      const extractedVars = extractVariablesFromContent(preSelectedPlaybook.content);
+      if (extractedVars.length > 0) {
+        setSelectedVariables(prev => [...prev, ...extractedVars]);
+      }
+    }
+  }, [location.state, playbooks]);
 
 
 
