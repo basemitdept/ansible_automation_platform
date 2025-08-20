@@ -316,21 +316,3 @@ code {
     font-size: 13px !important;
   }
 }
-
-/* Hosts Box Styling for Dark Theme */
-.hosts-box {
-  background-color: #2d2d2d !important;
-  border: 2px solid #4a4a4a !important;
-  color: #ffffff !important;
-}
-
-.hosts-box * {
-  color: #ffffff !important;
-}
-
-.hosts-box code {
-  background-color: transparent !important;
-  color: #ffffff !important;
-  border: none !important;
-  padding: 0 !important;
-}
