@@ -2841,11 +2841,27 @@ def trigger_webhook(webhook_token):
     
     # Merge default variables with request variables EARLY so host selection can honor variable-defined targets
     variables = {}
+    
+    # Priority 1: Start with webhook default variables
     if webhook.default_variables:
         try:
             variables.update(json.loads(webhook.default_variables))
         except Exception:
             pass
+    
+    # Priority 2: Add playbook assigned variables (these should override webhook defaults)
+    if playbook.assigned_variables:
+        try:
+            assigned_variable_ids = json.loads(playbook.assigned_variables)
+            if assigned_variable_ids:
+                # Get the actual variable values from the database
+                assigned_vars = Variable.query.filter(Variable.id.in_(assigned_variable_ids)).all()
+                for var in assigned_vars:
+                    variables[var.key] = var.value
+        except Exception as e:
+            print(f"Warning: Failed to load assigned variables: {e}")
+    
+    # Priority 3: Add request variables (these should override both webhook defaults and assigned variables)
     if 'variables' in data and isinstance(data['variables'], dict):
         variables.update(data['variables'])
 
