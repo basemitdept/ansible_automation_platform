@@ -18,15 +18,42 @@ services:
       timeout: 5s
       retries: 5
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ansible_user
+      RABBITMQ_DEFAULT_PASS: ansible_password
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - ansible_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     build: ./backend
     depends_on:
       postgres:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://ansible_user:ansible_password@postgres:5432/ansible_automation
       FLASK_ENV: development
       ANSIBLE_SSH_USER: ansible
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ansible_user
+      RABBITMQ_PASS: ansible_password
+      RABBITMQ_VHOST: /
     volumes:
       - ./playbooks:/app/playbooks
       - ./backend:/app
@@ -67,6 +94,7 @@ services:
 
 volumes:
   postgres_data:
+  rabbitmq_data:
 
 networks:
   ansible_network:

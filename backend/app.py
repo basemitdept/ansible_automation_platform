@@ -19,6 +19,7 @@ import mimetypes
 import shutil
 from functools import wraps
 import psutil
+from rabbitmq_service import rabbitmq_service, init_rabbitmq, cleanup_rabbitmq
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///ansible_automation.db')
@@ -1022,6 +1023,78 @@ def migrate_hosts():
             'timestamp': datetime.utcnow().isoformat() + 'Z'
         }), 500
 
+# Queue status endpoint
+@app.route('/api/queue/status', methods=['GET'])
+@jwt_required()
+def get_queue_status():
+    """Get RabbitMQ queue status"""
+    try:
+        status = rabbitmq_service.get_queue_status()
+        if status:
+            return jsonify({
+                'status': 'success',
+                'queue': status,
+                'timestamp': datetime.utcnow().isoformat()
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'RabbitMQ not connected',
+                'timestamp': datetime.utcnow().isoformat()
+            }), 503
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+# Queue management endpoint
+@app.route('/api/queue/control', methods=['POST'])
+@jwt_required()
+def control_queue():
+    """Control RabbitMQ queue (start/stop worker)"""
+    try:
+        data = request.json
+        action = data.get('action')
+        
+        if action == 'start':
+            rabbitmq_service.start_worker()
+            return jsonify({
+                'status': 'success',
+                'message': 'Queue worker started',
+                'timestamp': datetime.utcnow().isoformat()
+            })
+        elif action == 'stop':
+            rabbitmq_service.stop_worker()
+            return jsonify({
+                'status': 'success',
+                'message': 'Queue worker stopped',
+                'timestamp': datetime.utcnow().isoformat()
+            })
+        elif action == 'restart':
+            rabbitmq_service.stop_worker()
+            time.sleep(1)  # Brief pause
+            rabbitmq_service.start_worker()
+            return jsonify({
+                'status': 'success',
+                'message': 'Queue worker restarted',
+                'timestamp': datetime.utcnow().isoformat()
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid action. Use: start, stop, or restart',
+                'timestamp': datetime.utcnow().isoformat()
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
 # Health check endpoint for debugging
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -1054,7 +1127,10 @@ def health_check():
         hosts_result = db.session.execute(text("SELECT id, name, hostname FROM hosts LIMIT 3"))
         sample_hosts = [{'id': row.id, 'name': row.name, 'hostname': row.hostname} for row in hosts_result]
         
-        return jsonify({
+        # Check RabbitMQ status
+        rabbitmq_status = rabbitmq_service.get_queue_status()
+        
+        health_data = {
             'status': 'healthy',
             'database': 'connected',
             'host_groups_count': host_groups_count,
@@ -1065,8 +1141,16 @@ def health_check():
                 'has_port': 'port' in existing_columns,
                 'missing_columns': ['os_type', 'port'] if not existing_columns else [col for col in ['os_type', 'port'] if col not in existing_columns]
             },
+            'rabbitmq': rabbitmq_status,
             'timestamp': datetime.utcnow().isoformat() + 'Z'
-        })
+        }
+        
+        # If RabbitMQ is not available, mark as degraded but not unhealthy
+        if not rabbitmq_status or not rabbitmq_status.get('is_connected'):
+            health_data['status'] = 'degraded'
+            health_data['rabbitmq'] = 'disconnected'
+        
+        return jsonify(health_data)
     except Exception as e:
         return jsonify({
             'status': 'unhealthy',
@@ -2696,22 +2780,23 @@ def execute_playbook():
 
     print(f"🔄 GIT SYNC COMPLETED - Proceeding to execution phase")
 
-    # Execute the playbook against all hosts in a single run
+    # Queue the execution request instead of running immediately
     try:
-        # Update task status to running (started_at will be set when execution actually starts)
-        task.status = 'running'
+        # Update task status to queued
+        task.status = 'queued'
         db.session.commit()
         
         # Emit initial task status update
         socketio.emit('task_update', {
             'task_id': str(task.id),
-            'status': 'running'
+            'status': 'queued',
+            'message': 'Request queued for execution'
         })
         
         # Ensure we have the latest playbook content by refreshing from database AFTER Git sync
         db.session.refresh(playbook)
         
-        # Force a fresh query to get the absolute latest content from database AFTER Git sync
+        # Force a fresh query to get the absolute latest content from database AFTER GIT SYNC
         fresh_playbook = db.session.query(Playbook).filter_by(id=playbook_id).first()
         if fresh_playbook:
             playbook = fresh_playbook
@@ -2728,33 +2813,59 @@ def execute_playbook():
             'os_type': playbook.os_type  # Add OS type for proper Windows/Linux handling
         }
         
-        print(f"🚀 STARTING EXECUTION OF PLAYBOOK: {playbook_data['id']} - {playbook_data['name']}")
-        print(f"🚀 PLAYBOOK CONTENT LENGTH: {len(playbook_data['content'])} characters")
-        print(f"🚀 PLAYBOOK CONTENT FIRST 100 CHARS: {playbook_data['content'][:100]}...")
+        print(f"📋 QUEUING EXECUTION REQUEST FOR PLAYBOOK: {playbook_data['id']} - {playbook_data['name']}")
         
-        thread = threading.Thread(
-            target=run_ansible_playbook_multi_host_safe,
-            args=(task.id, playbook_data, host_data, username, password, variables)
-        )
-        thread.daemon = True
-        thread.start()
-        print(f"Started multi-host execution thread for task {task.id} on {len(hosts)} hosts")
+        # Prepare execution data for queuing
+        execution_data = {
+            'task_id': task.id,
+            'playbook_data': playbook_data,
+            'host_data': host_data,
+            'username': username,
+            'password': password,
+            'variables': variables,
+            'user_id': current_user_id
+        }
+        
+        # Queue the execution request
+        if rabbitmq_service.publish_execution_request(execution_data):
+            print(f"✅ Successfully queued execution request for task {task.id}")
+        else:
+            # Fallback to immediate execution if queuing fails
+            print(f"⚠️ Failed to queue request, falling back to immediate execution")
+            task.status = 'running'
+            db.session.commit()
+            
+            socketio.emit('task_update', {
+                'task_id': str(task.id),
+                'status': 'running',
+                'message': 'Starting immediate execution (queue unavailable)'
+            })
+            
+            thread = threading.Thread(
+                target=run_ansible_playbook_multi_host_safe,
+                args=(task.id, playbook_data, host_data, username, password, variables)
+            )
+            thread.daemon = True
+            thread.start()
+            
     except Exception as e:
-        print(f"Failed to start execution thread for task {task.id}: {str(e)}")
+        print(f"Failed to queue execution request for task {task.id}: {str(e)}")
         task.status = 'failed'
-        task.error_output = f"Failed to start execution: {str(e)}"
+        task.error_output = f"Failed to queue execution: {str(e)}"
         db.session.commit()
         
         # Emit failure status update
         socketio.emit('task_update', {
             'task_id': str(task.id),
-            'status': 'failed'
+            'status': 'failed',
+            'message': f'Failed to queue execution: {str(e)}'
         })
     
     return jsonify({
-        'message': f'Started playbook execution' + (f' on {len(hosts)} host(s)' if hosts else ' with dynamic/playbook-defined targets'),
+        'message': f'Queued playbook execution' + (f' on {len(hosts)} host(s)' if hosts else ' with dynamic/playbook-defined targets'),
         'task': task.to_dict(),
-        'hosts': [host.name for host in hosts] if hosts else []
+        'hosts': [host.name for host in hosts] if hosts else [],
+        'queued': True
     }), 201
 
 # Webhook API endpoints
@@ -3052,22 +3163,57 @@ def trigger_webhook(webhook_token):
     webhook.trigger_count += 1
     db.session.commit()
     
-    # Execute the playbook using data instead of ORM objects
+    # Queue the webhook execution request instead of running immediately
     try:
-        thread = threading.Thread(
-            target=run_webhook_playbook,
-            args=(task_id, playbook_data, host_objects, username, password, variables, webhook_id)
-        )
-        thread.daemon = True
-        thread.start()
+        # Update task status to queued
+        task.status = 'queued'
+        db.session.commit()
         
-        return jsonify({
-            'message': 'Webhook triggered successfully',
-            'task_id': str(task_id),
-            'playbook': playbook.name,
-            'hosts': len(host_objects),
-            'variables': variables
-        }), 200
+        # Prepare execution data for queuing
+        execution_data = {
+            'task_id': task_id,
+            'playbook_data': playbook_data,
+            'host_data': host_objects,
+            'username': username,
+            'password': password,
+            'variables': variables,
+            'user_id': webhook.user_id,
+            'webhook_id': webhook_id,
+            'is_webhook': True  # Flag to identify webhook executions
+        }
+        
+        # Queue the execution request
+        if rabbitmq_service.publish_execution_request(execution_data):
+            print(f"✅ Successfully queued webhook execution request for task {task_id}")
+            return jsonify({
+                'message': 'Webhook triggered successfully - queued for execution',
+                'task_id': str(task_id),
+                'playbook': playbook.name,
+                'hosts': len(host_objects),
+                'variables': variables,
+                'queued': True
+            })
+        else:
+            # Fallback to immediate execution if queuing fails
+            print(f"⚠️ Failed to queue webhook request, falling back to immediate execution")
+            task.status = 'running'
+            db.session.commit()
+            
+            thread = threading.Thread(
+                target=run_webhook_playbook,
+                args=(task_id, playbook_data, host_objects, username, password, variables, webhook_id)
+            )
+            thread.daemon = True
+            thread.start()
+            
+            return jsonify({
+                'message': 'Webhook triggered successfully - immediate execution (queue unavailable)',
+                'task_id': str(task_id),
+                'playbook': playbook.name,
+                'hosts': len(host_objects),
+                'variables': variables,
+                'queued': False
+            }), 200
         
     except Exception as e:
         return jsonify({'error': f'Failed to trigger webhook: {str(e)}'}), 500
@@ -6588,5 +6734,18 @@ def initialize_database():
 # Initialize database on app startup
 initialize_database()
 
+# Initialize RabbitMQ service
+try:
+    if init_rabbitmq():
+        print("✅ RabbitMQ service initialized successfully")
+    else:
+        print("⚠️ RabbitMQ service initialization failed, continuing without queuing")
+except Exception as e:
+    print(f"⚠️ RabbitMQ initialization error: {e}, continuing without queuing")
+
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True) 
+    try:
+        socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    finally:
+        # Cleanup RabbitMQ on shutdown
+        cleanup_rabbitmq() 
