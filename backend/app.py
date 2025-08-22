@@ -4468,6 +4468,62 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                                 useful_data['stdout'] = cleaned_stdout
                                                 useful_data['msg'] = f"Task output: {cleaned_stdout[:100]}..."
                                 
+                                # Special handling for RedHat results field
+                                if '"results":' in json_content:
+                                    print(f"🔍 DEBUG: Found RedHat results field in raw content")
+                                    # Extract results content (simplified)
+                                    results_match = json_content.find('"results":')
+                                    if results_match != -1:
+                                        # Find the start of the results array
+                                        start = json_content.find('[', results_match)
+                                        if start != -1:
+                                            # Find the end of the results array (simplified)
+                                            end = json_content.find(']', start + 1)
+                                            if end != -1:
+                                                results_content = json_content[start+1:end]
+                                                # Clean up and format results
+                                                results_items = [item.strip().strip('"') for item in results_content.split(',') if item.strip()]
+                                                
+                                                # Organize results by type
+                                                installed_packages = []
+                                                removed_packages = []
+                                                updated_packages = []
+                                                other_packages = []
+                                                
+                                                for result in results_items:
+                                                    if result.startswith('Installed:'):
+                                                        installed_packages.append(result.replace('Installed: ', ''))
+                                                    elif result.startswith('Removed:'):
+                                                        removed_packages.append(result.replace('Removed: ', ''))
+                                                    elif result.startswith('Updated:'):
+                                                        updated_packages.append(result.replace('Updated: ', ''))
+                                                    else:
+                                                        other_packages.append(result)
+                                                
+                                                # Build formatted output
+                                                formatted_output = []
+                                                if installed_packages:
+                                                    formatted_output.append("📦 INSTALLED PACKAGES:")
+                                                    formatted_output.extend([f"  • {pkg}" for pkg in installed_packages])
+                                                    formatted_output.append("")
+                                                if updated_packages:
+                                                    formatted_output.append("🔄 UPDATED PACKAGES:")
+                                                    formatted_output.extend([f"  • {pkg}" for pkg in updated_packages])
+                                                    formatted_output.append("")
+                                                if removed_packages:
+                                                    formatted_output.append("🗑️ REMOVED PACKAGES:")
+                                                    formatted_output.extend([f"  • {pkg}" for pkg in removed_packages])
+                                                    formatted_output.append("")
+                                                if other_packages:
+                                                    formatted_output.append("📋 OTHER CHANGES:")
+                                                    formatted_output.extend([f"  • {pkg}" for pkg in other_packages])
+                                                    formatted_output.append("")
+                                                
+                                                results_text = '\n'.join(formatted_output)
+                                                useful_data['stdout'] = results_text
+                                                useful_data['msg'] = f"RedHat system packages updated successfully ({len(results_items)} packages affected)"
+                                                print(f"🔍 DEBUG: Created formatted stdout from raw results: {results_text[:100]}...")
+                                
                                 if not useful_data:
                                     useful_data = {
                                         'msg': "Task completed successfully (JSON parsing failed)",
@@ -4542,6 +4598,49 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                             # If field is not serializable, convert to string
                                             useful_data[field] = str(field_value)
                                             print(f"🔍 DEBUG: Converted non-serializable field '{field}' to string: {str(field_value)[:100]}...")
+                                
+                                # Special handling for RedHat dnf/yum results field
+                                if 'results' in register_data and isinstance(register_data['results'], list):
+                                    print(f"🔍 DEBUG: Found RedHat results field with {len(register_data['results'])} items")
+                                    # Organize results by type (Installed, Removed, Updated, etc.)
+                                    installed_packages = []
+                                    removed_packages = []
+                                    updated_packages = []
+                                    other_packages = []
+                                    
+                                    for result in register_data['results']:
+                                        if result.startswith('Installed:'):
+                                            installed_packages.append(result.replace('Installed: ', ''))
+                                        elif result.startswith('Removed:'):
+                                            removed_packages.append(result.replace('Removed: ', ''))
+                                        elif result.startswith('Updated:'):
+                                            updated_packages.append(result.replace('Updated: ', ''))
+                                        else:
+                                            other_packages.append(result)
+                                    
+                                    # Build formatted output
+                                    formatted_output = []
+                                    if installed_packages:
+                                        formatted_output.append("📦 INSTALLED PACKAGES:")
+                                        formatted_output.extend([f"  • {pkg}" for pkg in installed_packages])
+                                        formatted_output.append("")
+                                    if updated_packages:
+                                        formatted_output.append("🔄 UPDATED PACKAGES:")
+                                        formatted_output.extend([f"  • {pkg}" for pkg in updated_packages])
+                                        formatted_output.append("")
+                                    if removed_packages:
+                                        formatted_output.append("🗑️ REMOVED PACKAGES:")
+                                        formatted_output.extend([f"  • {pkg}" for pkg in removed_packages])
+                                        formatted_output.append("")
+                                    if other_packages:
+                                        formatted_output.append("📋 OTHER CHANGES:")
+                                        formatted_output.extend([f"  • {pkg}" for pkg in other_packages])
+                                        formatted_output.append("")
+                                    
+                                    results_text = '\n'.join(formatted_output)
+                                    useful_data['stdout'] = results_text
+                                    useful_data['msg'] = f"RedHat system packages updated successfully ({len(register_data['results'])} packages affected)"
+                                    print(f"🔍 DEBUG: Created formatted stdout from results: {results_text[:100]}...")
                                 
                                 # Add error-related fields
                                 for field in ['failed_reason', 'reason', 'exception']:
@@ -4659,6 +4758,62 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                                         useful_data['stdout'] = cleaned_stdout
                                                         useful_data['msg'] = f"Task output: {cleaned_stdout[:100]}..."
                                         
+                                        # Special handling for RedHat results field
+                                        if '"results":' in json_content:
+                                            print(f"🔍 DEBUG: Found RedHat results field in raw content")
+                                            # Extract results content (simplified)
+                                            results_match = json_content.find('"results":')
+                                            if results_match != -1:
+                                                # Find the start of the results array
+                                                start = json_content.find('[', results_match)
+                                                if start != -1:
+                                                    # Find the end of the results array (simplified)
+                                                    end = json_content.find(']', start + 1)
+                                                    if end != -1:
+                                                        results_content = json_content[start+1:end]
+                                                        # Clean up and format results
+                                                        results_items = [item.strip().strip('"') for item in results_content.split(',') if item.strip()]
+                                                        
+                                                        # Organize results by type
+                                                        installed_packages = []
+                                                        removed_packages = []
+                                                        updated_packages = []
+                                                        other_packages = []
+                                                        
+                                                        for result in results_items:
+                                                            if result.startswith('Installed:'):
+                                                                installed_packages.append(result.replace('Installed: ', ''))
+                                                            elif result.startswith('Removed:'):
+                                                                removed_packages.append(result.replace('Removed: ', ''))
+                                                            elif result.startswith('Updated:'):
+                                                                updated_packages.append(result.replace('Updated: ', ''))
+                                                            else:
+                                                                other_packages.append(result)
+                                                        
+                                                        # Build formatted output
+                                                        formatted_output = []
+                                                        if installed_packages:
+                                                            formatted_output.append("📦 INSTALLED PACKAGES:")
+                                                            formatted_output.extend([f"  • {pkg}" for pkg in installed_packages])
+                                                            formatted_output.append("")
+                                                        if updated_packages:
+                                                            formatted_output.append("🔄 UPDATED PACKAGES:")
+                                                            formatted_output.extend([f"  • {pkg}" for pkg in updated_packages])
+                                                            formatted_output.append("")
+                                                        if removed_packages:
+                                                            formatted_output.append("🗑️ REMOVED PACKAGES:")
+                                                            formatted_output.extend([f"  • {pkg}" for pkg in removed_packages])
+                                                            formatted_output.append("")
+                                                        if other_packages:
+                                                            formatted_output.append("📋 OTHER CHANGES:")
+                                                            formatted_output.extend([f"  • {pkg}" for pkg in other_packages])
+                                                            formatted_output.append("")
+                                                        
+                                                        results_text = '\n'.join(formatted_output)
+                                                        useful_data['stdout'] = results_text
+                                                        useful_data['msg'] = f"RedHat system packages updated successfully ({len(results_items)} packages affected)"
+                                                        print(f"🔍 DEBUG: Created formatted stdout from raw results: {results_text[:100]}...")
+                                        
                                         if not useful_data:
                                             useful_data = {
                                                 'msg': "Task completed successfully (JSON parsing failed)",
@@ -4725,6 +4880,49 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                                     field_value = clean_ansible_output(field_value)
                                                 useful_data[field] = field_value
                                                 print(f"🔍 DEBUG: Found useful field '{field}': {str(field_value)[:100]}...")
+                                        
+                                        # Special handling for RedHat dnf/yum results field
+                                        if 'results' in register_data and isinstance(register_data['results'], list):
+                                            print(f"🔍 DEBUG: Found RedHat results field with {len(register_data['results'])} items")
+                                            # Organize results by type (Installed, Removed, Updated, etc.)
+                                            installed_packages = []
+                                            removed_packages = []
+                                            updated_packages = []
+                                            other_packages = []
+                                            
+                                            for result in register_data['results']:
+                                                if result.startswith('Installed:'):
+                                                    installed_packages.append(result.replace('Installed: ', ''))
+                                                elif result.startswith('Removed:'):
+                                                    removed_packages.append(result.replace('Removed: ', ''))
+                                                elif result.startswith('Updated:'):
+                                                    updated_packages.append(result.replace('Updated: ', ''))
+                                                else:
+                                                    other_packages.append(result)
+                                            
+                                            # Build formatted output
+                                            formatted_output = []
+                                            if installed_packages:
+                                                formatted_output.append("📦 INSTALLED PACKAGES:")
+                                                formatted_output.extend([f"  • {pkg}" for pkg in installed_packages])
+                                                formatted_output.append("")
+                                            if updated_packages:
+                                                formatted_output.append("🔄 UPDATED PACKAGES:")
+                                                formatted_output.extend([f"  • {pkg}" for pkg in updated_packages])
+                                                formatted_output.append("")
+                                            if removed_packages:
+                                                formatted_output.append("🗑️ REMOVED PACKAGES:")
+                                                formatted_output.extend([f"  • {pkg}" for pkg in removed_packages])
+                                                formatted_output.append("")
+                                            if other_packages:
+                                                formatted_output.append("📋 OTHER CHANGES:")
+                                                formatted_output.extend([f"  • {pkg}" for pkg in other_packages])
+                                                formatted_output.append("")
+                                            
+                                            results_text = '\n'.join(formatted_output)
+                                            useful_data['stdout'] = results_text
+                                            useful_data['msg'] = f"RedHat system packages updated successfully ({len(register_data['results'])} packages affected)"
+                                            print(f"🔍 DEBUG: Created formatted stdout from results: {results_text[:100]}...")
                                         
                                         # Add error-related fields
                                         for field in ['failed_reason', 'reason', 'exception']:
