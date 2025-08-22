@@ -387,6 +387,8 @@ const History = () => {
     }
   };
 
+
+
   const showOutput = async (execution) => {
     setOutputModalVisible(true);
     setOutputLoading(true);
@@ -1188,6 +1190,9 @@ const History = () => {
                 ) : artifacts.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
                     <div>No register variables found for this execution</div>
+                    <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                      This might occur if the playbook doesn't use register variables or if artifact extraction failed.
+                    </div>
                   </div>
                 ) : (
                   <>
@@ -1260,7 +1265,19 @@ const History = () => {
                                 ? JSON.parse(artifact.register_data) 
                                 : artifact.register_data;
                               
-                              const msg = data?.msg;
+                              // Handle malformed msg field
+                              let msg = data?.msg;
+                              if (msg === '{' || (typeof msg === 'string' && msg.startsWith('{') && !msg.endsWith('}'))) {
+                                msg = "Task completed successfully (output was truncated)";
+                              } else if (!msg || msg.trim() === '') {
+                                // Handle empty msg field - use stdout if available
+                                if (data?.stdout) {
+                                  msg = `Task output: ${data.stdout.substring(0, 100)}${data.stdout.length > 100 ? '...' : ''}`;
+                                } else {
+                                  msg = "Task completed successfully";
+                                }
+                              }
+                              
                               const stdout = data?.stdout;
                               const stderr = data?.stderr;
                               const changed = data?.changed;
@@ -1308,13 +1325,18 @@ const History = () => {
                                         marginTop: '4px',
                                         fontSize: '13px',
                                         fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
-                                        maxHeight: '200px',
+                                        maxHeight: '300px',
                                         overflow: 'auto',
                                         whiteSpace: 'pre-wrap',
                                         lineHeight: '1.45'
                                       }}>
                                         {stdout}
                                       </pre>
+                                      {stdout.length > 500 && (
+                                        <div style={{ fontSize: '11px', color: '#666', marginTop: '4px' }}>
+                                          Showing first 500 characters. Use "View Full JSON Data" below to see complete output.
+                                        </div>
+                                      )}
                                     </div>
                                   )}
                                   

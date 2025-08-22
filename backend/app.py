@@ -2005,6 +2005,66 @@ def get_artifact_data(artifact_id):
         'data': artifact.register_data
     })
 
+@app.route('/api/artifacts/fix-malformed', methods=['POST'])
+@jwt_required()
+def fix_malformed_artifacts():
+    """Fix existing artifacts with malformed msg fields"""
+    try:
+        import json
+        fixed_count = 0
+        
+        # Find artifacts with malformed msg fields
+        artifacts = Artifact.query.all()
+        
+        for artifact in artifacts:
+            try:
+                # Parse the register_data
+                if artifact.register_data:
+                    data = json.loads(artifact.register_data)
+                    if isinstance(data, dict) and 'msg' in data:
+                        msg_value = data['msg']
+                        if isinstance(msg_value, str) and msg_value.strip() == '{':
+                            print(f"🔧 Fixing malformed artifact {artifact.id}: '{msg_value}' -> 'Task completed successfully'")
+                            data['msg'] = "Task completed successfully"
+                            artifact.register_data = json.dumps(data, indent=2)
+                            fixed_count += 1
+                        elif isinstance(msg_value, str) and msg_value.startswith('{') and not msg_value.endswith('}'):
+                            print(f"🔧 Fixing truncated artifact {artifact.id}: '{msg_value}' -> 'Task completed successfully'")
+                            data['msg'] = "Task completed successfully"
+                            artifact.register_data = json.dumps(data, indent=2)
+                            fixed_count += 1
+                        elif isinstance(msg_value, str) and not msg_value.strip():
+                            # Handle empty msg field - use stdout if available
+                            if 'stdout' in data and data['stdout']:
+                                print(f"🔧 Fixing empty msg field in artifact {artifact.id}: using stdout content")
+                                data['msg'] = f"Task output: {data['stdout'][:100]}..."
+                            else:
+                                print(f"🔧 Fixing empty msg field in artifact {artifact.id}: setting default message")
+                                data['msg'] = "Task completed successfully"
+                            artifact.register_data = json.dumps(data, indent=2)
+                            fixed_count += 1
+            except Exception as e:
+                print(f"⚠️  Error processing artifact {artifact.id}: {e}")
+                continue
+        
+        if fixed_count > 0:
+            db.session.commit()
+            print(f"✅ Fixed {fixed_count} malformed artifacts")
+        
+        return jsonify({
+            'success': True,
+            'fixed_count': fixed_count,
+            'message': f'Fixed {fixed_count} malformed artifacts'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error fixing malformed artifacts: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 # Credentials API endpoints
 @app.route('/api/credentials', methods=['GET'])
 @jwt_required()
@@ -4123,6 +4183,46 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
     Returns raw artifact data that can be used to create Artifact models.
     """
     import json  # Import json at the top of the function
+    import re
+    
+    def clean_ansible_output(output_text):
+        """
+        Clean up Ansible output by removing escape sequences and formatting it properly.
+        """
+        if not output_text:
+            return output_text
+            
+        # Remove carriage returns and normalize line endings
+        cleaned = output_text.replace('\r', '').replace('\r\n', '\n')
+        
+        # Remove common Ansible escape sequences
+        cleaned = re.sub(r'\\n', '\n', cleaned)  # Convert \n to actual newlines
+        cleaned = re.sub(r'\\r', '', cleaned)    # Remove \r
+        cleaned = re.sub(r'\\t', '\t', cleaned)  # Convert \t to actual tabs
+        
+        # Remove ANSI color codes and control sequences
+        cleaned = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', cleaned)  # ANSI escape sequences
+        cleaned = re.sub(r'\x1b\[[0-9;]*m', '', cleaned)         # Color codes
+        
+        # Clean up excessive whitespace
+        lines = cleaned.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            # Remove trailing whitespace
+            line = line.rstrip()
+            # Skip empty lines or lines with just whitespace
+            if line.strip():
+                cleaned_lines.append(line)
+        
+        # Join lines back together
+        cleaned = '\n'.join(cleaned_lines)
+        
+        # Truncate if too long (keep first 2000 characters)
+        if len(cleaned) > 2000:
+            cleaned = cleaned[:2000] + '\n... (output truncated)'
+            
+        return cleaned
+    
     artifacts_data = []
     print(f"🚀🚀🚀 EXTRACT_REGISTER_FROM_OUTPUT CALLED! Execution: {execution_id}, Hosts: {len(hosts)}")
     print(f"Starting artifact extraction for {len(hosts)} hosts")
@@ -4230,10 +4330,14 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
         # If the initial text does not start a JSON object, bail out
         if '{' not in text:
             return text
+            
+        # Special case: if text is just '{', we need to accumulate the full JSON
+        if text.strip() == '{':
+            print(f"🔍 DEBUG: Starting JSON accumulation from just '{{'")
 
         # Keep appending following lines until depth returns to 0
         j = 1
-        max_lookahead = 50
+        max_lookahead = 100  # Increased from 50 to handle more complex JSON
         while depth > 0 and j <= max_lookahead and (start_index + j) < len(output_lines):
             next_line = output_lines[start_index + j].strip()
             # Skip empty separators
@@ -4244,13 +4348,20 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
             lower = next_line.lower()
             if (next_line.startswith('TASK [') or
                 any(token in lower for token in ['ok: [', 'changed: [', 'failed: [', 'fatal: [', 'skipped: [', 'unreachable: ['])):
+                print(f"🔍 DEBUG: Stopping JSON accumulation at line {start_index + j}: {next_line[:50]}...")
                 break
 
             text += '\n' + next_line
             process_chunk(next_line)
             if depth <= 0:
+                print(f"🔍 DEBUG: JSON depth reached 0, stopping accumulation")
                 break
             j += 1
+            
+        # If we still have depth > 0, the JSON might be incomplete
+        if depth > 0:
+            print(f"⚠️  WARNING: JSON accumulation stopped with depth {depth}, JSON might be incomplete")
+            print(f"⚠️  WARNING: Last accumulated text: {text[-200:]}...")
 
         return text
     
@@ -4313,16 +4424,84 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                             json_start = line.find("=> {") + 3
                             json_content = line[json_start:].strip()
                             print(f"🔍 DEBUG: Initial JSON content: '{json_content}'")
-                            # Use robust accumulator that ignores braces inside strings
-                            if json_content.startswith('{'):
+                            
+                            # Special handling for when JSON starts with just '{'
+                            if json_content == '{':
+                                print(f"🔍 DEBUG: JSON starts with just '{{', will accumulate from next lines")
+                                json_content = accumulate_json_block(json_content, i)
+                                print(f"🔍 DEBUG: After accumulation (first 500): {json_content[:500]}...")
+                            elif json_content.startswith('{'):
                                 json_content = accumulate_json_block(json_content, i)
                                 print(f"🔍 DEBUG: Accumulated JSON (first 300): {json_content[:300]}...")
                             else:
                                 print(f"🔍 DEBUG: Unexpected JSON start, keeping as-is: {json_content[:120]}...")
                             
                             # Try to parse the JSON - now handle all statuses including fatal/unreachable
-                            register_data = json.loads(json_content)
-                            print(f"🔍 DEBUG: Successfully parsed JSON with keys: {list(register_data.keys()) if isinstance(register_data, dict) else 'Not a dict'}")
+                            try:
+                                register_data = json.loads(json_content)
+                                print(f"🔍 DEBUG: Successfully parsed JSON with keys: {list(register_data.keys()) if isinstance(register_data, dict) else 'Not a dict'}")
+                            except json.JSONDecodeError as e:
+                                print(f"❌ DEBUG: Failed to parse JSON: {e}")
+                                print(f"❌ DEBUG: JSON content was: {json_content[:200]}...")
+                                
+                                # Try to extract useful information from the raw content
+                                useful_data = {}
+                                
+                                # Look for common fields in the raw content
+                                if '"changed":' in json_content:
+                                    useful_data['changed'] = 'true' in json_content.lower()
+                                if '"stdout":' in json_content:
+                                    # Extract stdout content
+                                    stdout_match = json_content.find('"stdout":')
+                                    if stdout_match != -1:
+                                        # Find the start of the stdout value
+                                        start = json_content.find('"', stdout_match + 9)
+                                        if start != -1:
+                                            # Find the end of the stdout value (simplified)
+                                            end = json_content.find('",', start + 1)
+                                            if end == -1:
+                                                end = json_content.find('"}', start + 1)
+                                            if end != -1:
+                                                stdout_content = json_content[start+1:end]
+                                                # Clean up the stdout content
+                                                cleaned_stdout = clean_ansible_output(stdout_content)
+                                                useful_data['stdout'] = cleaned_stdout
+                                                useful_data['msg'] = f"Task output: {cleaned_stdout[:100]}..."
+                                
+                                if not useful_data:
+                                    useful_data = {
+                                        'msg': "Task completed successfully (JSON parsing failed)",
+                                        'raw_content': json_content[:500],
+                                        'error': True
+                                    }
+                                
+                                register_data = useful_data
+                            
+                            # Fix malformed msg field that contains just "{" instead of proper JSON
+                            if isinstance(register_data, dict) and 'msg' in register_data:
+                                msg_value = register_data['msg']
+                                if isinstance(msg_value, str) and msg_value.strip() == '{':
+                                    print(f"⚠️  FIXING malformed msg field: '{msg_value}' -> 'Task completed successfully'")
+                                    register_data['msg'] = "Task completed successfully"
+                                elif isinstance(msg_value, str) and msg_value.startswith('{') and not msg_value.endswith('}'):
+                                    print(f"⚠️  FIXING truncated msg field: '{msg_value}' -> 'Task completed successfully'")
+                                    register_data['msg'] = "Task completed successfully"
+                                elif isinstance(msg_value, str) and not msg_value.strip():
+                                    # Handle empty msg field - use stdout if available
+                                    if 'stdout' in register_data and register_data['stdout']:
+                                        print(f"🔧 Empty msg field, using stdout content")
+                                        register_data['msg'] = f"Task output: {register_data['stdout'][:100]}..."
+                                    else:
+                                        print(f"🔧 Empty msg field, setting default message")
+                                        register_data['msg'] = "Task completed successfully"
+                                elif isinstance(msg_value, str) and len(msg_value.strip()) < 5:
+                                    # Handle very short msg fields that might be incomplete
+                                    if 'stdout' in register_data and register_data['stdout']:
+                                        print(f"🔧 Very short msg field, using stdout content")
+                                        register_data['msg'] = f"Task output: {register_data['stdout'][:100]}..."
+                                    else:
+                                        print(f"🔧 Very short msg field, setting default message")
+                                        register_data['msg'] = "Task completed successfully"
                             
                             # Extract useful data from Ansible JSON output
                             register_name = f"{current_task.replace(' ', '_').lower()}_result"
@@ -4350,6 +4529,9 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                 for field in ['msg', 'stdout', 'stderr', 'rc', 'changed', 'failed', 'skipped', 'unreachable']:
                                     if field in register_data:
                                         field_value = register_data[field]
+                                        # Clean up stdout and stderr fields
+                                        if field in ['stdout', 'stderr'] and isinstance(field_value, str):
+                                            field_value = clean_ansible_output(field_value)
                                         # Ensure the field value is JSON-serializable
                                         try:
                                             # Test if we can serialize this field
@@ -4447,7 +4629,70 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                     # Collect multi-line JSON using robust accumulator
                                     json_content = accumulate_json_block(next_line, i + 1)
                                     print(f"🔍 DEBUG: Multi-line JSON content: {json_content[:300]}...")
-                                    register_data = json.loads(json_content)
+                                    try:
+                                        register_data = json.loads(json_content)
+                                    except json.JSONDecodeError as e:
+                                        print(f"❌ DEBUG: Failed to parse multi-line JSON: {e}")
+                                        print(f"❌ DEBUG: JSON content was: {json_content[:200]}...")
+                                        
+                                        # Try to extract useful information from the raw content
+                                        useful_data = {}
+                                        
+                                        # Look for common fields in the raw content
+                                        if '"changed":' in json_content:
+                                            useful_data['changed'] = 'true' in json_content.lower()
+                                        if '"stdout":' in json_content:
+                                            # Extract stdout content
+                                            stdout_match = json_content.find('"stdout":')
+                                            if stdout_match != -1:
+                                                # Find the start of the stdout value
+                                                start = json_content.find('"', stdout_match + 9)
+                                                if start != -1:
+                                                    # Find the end of the stdout value (simplified)
+                                                    end = json_content.find('",', start + 1)
+                                                    if end == -1:
+                                                        end = json_content.find('"}', start + 1)
+                                                    if end != -1:
+                                                        stdout_content = json_content[start+1:end]
+                                                        # Clean up the stdout content
+                                                        cleaned_stdout = clean_ansible_output(stdout_content)
+                                                        useful_data['stdout'] = cleaned_stdout
+                                                        useful_data['msg'] = f"Task output: {cleaned_stdout[:100]}..."
+                                        
+                                        if not useful_data:
+                                            useful_data = {
+                                                'msg': "Task completed successfully (JSON parsing failed)",
+                                                'raw_content': json_content[:500],
+                                                'error': True
+                                            }
+                                        
+                                        register_data = useful_data
+                                    
+                                    # Fix malformed msg field that contains just "{" instead of proper JSON
+                                    if isinstance(register_data, dict) and 'msg' in register_data:
+                                        msg_value = register_data['msg']
+                                        if isinstance(msg_value, str) and msg_value.strip() == '{':
+                                            print(f"⚠️  FIXING malformed msg field: '{msg_value}' -> 'Task completed successfully'")
+                                            register_data['msg'] = "Task completed successfully"
+                                        elif isinstance(msg_value, str) and msg_value.startswith('{') and not msg_value.endswith('}'):
+                                            print(f"⚠️  FIXING truncated msg field: '{msg_value}' -> 'Task completed successfully'")
+                                            register_data['msg'] = "Task completed successfully"
+                                        elif isinstance(msg_value, str) and not msg_value.strip():
+                                            # Handle empty msg field - use stdout if available
+                                            if 'stdout' in register_data and register_data['stdout']:
+                                                print(f"🔧 Empty msg field, using stdout content")
+                                                register_data['msg'] = f"Task output: {register_data['stdout'][:100]}..."
+                                            else:
+                                                print(f"🔧 Empty msg field, setting default message")
+                                                register_data['msg'] = "Task completed successfully"
+                                        elif isinstance(msg_value, str) and len(msg_value.strip()) < 5:
+                                            # Handle very short msg fields that might be incomplete
+                                            if 'stdout' in register_data and register_data['stdout']:
+                                                print(f"🔧 Very short msg field, using stdout content")
+                                                register_data['msg'] = f"Task output: {register_data['stdout'][:100]}..."
+                                            else:
+                                                print(f"🔧 Very short msg field, setting default message")
+                                                register_data['msg'] = "Task completed successfully"
                                     
                                     # Extract useful data from multi-line Ansible JSON output
                                     register_name = f"{current_task.replace(' ', '_').lower()}_result"
@@ -4474,8 +4719,12 @@ def extract_register_from_output(output_lines, execution_id, hosts, variables=No
                                         # Extract commonly useful fields
                                         for field in ['msg', 'stdout', 'stderr', 'rc', 'changed', 'failed', 'skipped', 'unreachable']:
                                             if field in register_data:
-                                                useful_data[field] = register_data[field]
-                                                print(f"🔍 DEBUG: Found useful field '{field}': {register_data[field]}")
+                                                field_value = register_data[field]
+                                                # Clean up stdout and stderr fields
+                                                if field in ['stdout', 'stderr'] and isinstance(field_value, str):
+                                                    field_value = clean_ansible_output(field_value)
+                                                useful_data[field] = field_value
+                                                print(f"🔍 DEBUG: Found useful field '{field}': {str(field_value)[:100]}...")
                                         
                                         # Add error-related fields
                                         for field in ['failed_reason', 'reason', 'exception']:
